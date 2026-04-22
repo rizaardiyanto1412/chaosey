@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "types": ["node"],
+    "paths": {
+      "@wasd/shared": ["../../packages/shared/src"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@wasd/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@wasd/shared": "0.1.0",
+    "colyseus.js": "^0.16.6",
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "vite": "^7.1.12",
+    "vitest": "^3.2.4"
+  }
+}
