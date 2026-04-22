@@ -1,4 +1,5 @@
 type Tool = "paint" | "erase";
+type TileMode = "auto" | "grid";
 
 interface AtlasConfig {
   tileW: number;
@@ -9,10 +10,19 @@ interface AtlasConfig {
   offsetY: number;
 }
 
+interface SourceRect {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+}
+
 interface MapDocument {
-  version: 1;
+  version: 2;
   tilesetSrc: string;
+  tileMode: TileMode;
   atlas: AtlasConfig;
+  paletteRects?: SourceRect[];
   map: {
     cols: number;
     rows: number;
@@ -21,7 +31,7 @@ interface MapDocument {
   };
 }
 
-const LOCAL_KEY = "wasd_map_editor_document_v1";
+const LOCAL_KEY = "wasd_map_editor_document_v2";
 
 const tilesetSelect = document.getElementById("tilesetSelect") as HTMLSelectElement;
 const tileWInput = document.getElementById("tileW") as HTMLInputElement;
@@ -51,30 +61,35 @@ const mapCanvas = document.getElementById("map") as HTMLCanvasElement;
 const paletteCtx = paletteCanvas.getContext("2d")!;
 const mapCtx = mapCanvas.getContext("2d")!;
 
+let mapTiles: number[] = [];
+let selectedTileIndex = 0;
+let tool: Tool = "paint";
+let tileMode: TileMode = "auto";
+let drawing = false;
+
+let currentPaletteRects: SourceRect[] = [];
+let autoDetectedRects: SourceRect[] = [];
+let paletteCells: Array<{ x: number; y: number; w: number; h: number; index: number }> = [];
+
 const tilesetImage = new Image();
 tilesetImage.decoding = "async";
 
 tilesetImage.onload = () => {
+  autoDetectedRects = detectSprites(tilesetImage);
+  if (tileMode === "auto" && autoDetectedRects.length > 0) {
+    currentPaletteRects = autoDetectedRects;
+  } else {
+    currentPaletteRects = buildGridRects();
+  }
+
+  selectedTileIndex = Math.min(selectedTileIndex, Math.max(0, currentPaletteRects.length - 1));
   renderPalette();
   renderMap();
-  setStatus(`Tileset loaded: ${tilesetImage.width}x${tilesetImage.height}`);
+  setStatus(`Tileset loaded: ${tilesetImage.width}x${tilesetImage.height}, auto-detected ${autoDetectedRects.length} sprites.`);
 };
 
 tilesetImage.onerror = () => {
   setStatus("Failed to load tileset.");
-};
-
-let mapTiles: number[] = [];
-let selectedTileIndex = 0;
-let tool: Tool = "paint";
-let drawing = false;
-
-let paletteDraw = {
-  x: 0,
-  y: 0,
-  w: 1,
-  h: 1,
-  scale: 1
 };
 
 function n(input: HTMLInputElement): number {
@@ -101,33 +116,158 @@ function mapConfig() {
   };
 }
 
-function atlasGridSize(config = atlasConfig()): { cols: number; rows: number; count: number } {
-  if (!tilesetImage.width || !tilesetImage.height) {
-    return { cols: 0, rows: 0, count: 0 };
+function detectSprites(image: HTMLImageElement): SourceRect[] {
+  if (!image.width || !image.height) return [];
+
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(image, 0, 0);
+
+  const { data, width, height } = ctx.getImageData(0, 0, image.width, image.height);
+  const visited = new Uint8Array(width * height);
+  const rects: SourceRect[] = [];
+  const alphaThreshold = 10;
+  const minPixels = 120;
+
+  const stack: number[] = [];
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const idx = y * width + x;
+      if (visited[idx]) continue;
+
+      const alpha = data[idx * 4 + 3];
+      if (alpha <= alphaThreshold) {
+        visited[idx] = 1;
+        continue;
+      }
+
+      let minX = x;
+      let minY = y;
+      let maxX = x;
+      let maxY = y;
+      let pixels = 0;
+
+      stack.push(idx);
+      visited[idx] = 1;
+
+      while (stack.length > 0) {
+        const p = stack.pop()!;
+        const py = Math.floor(p / width);
+        const px = p - py * width;
+
+        const pAlpha = data[p * 4 + 3];
+        if (pAlpha <= alphaThreshold) {
+          continue;
+        }
+
+        pixels += 1;
+        if (px < minX) minX = px;
+        if (py < minY) minY = py;
+        if (px > maxX) maxX = px;
+        if (py > maxY) maxY = py;
+
+        const neighbors = [p - 1, p + 1, p - width, p + width];
+        for (const nIdx of neighbors) {
+          if (nIdx < 0 || nIdx >= width * height) continue;
+          const ny = Math.floor(nIdx / width);
+          const nx = nIdx - ny * width;
+          if (Math.abs(nx - px) + Math.abs(ny - py) !== 1) continue;
+          if (visited[nIdx]) continue;
+          visited[nIdx] = 1;
+          stack.push(nIdx);
+        }
+      }
+
+      if (pixels >= minPixels) {
+        rects.push({
+          sx: Math.max(0, minX - 1),
+          sy: Math.max(0, minY - 1),
+          sw: Math.min(width - minX, maxX - minX + 3),
+          sh: Math.min(height - minY, maxY - minY + 3)
+        });
+      }
+    }
   }
+
+  rects.sort((a, b) => {
+    const dy = a.sy - b.sy;
+    if (Math.abs(dy) > 24) return dy;
+    return a.sx - b.sx;
+  });
+
+  return rects;
+}
+
+function detectBestGridConfig(image: HTMLImageElement): AtlasConfig | null {
+  const w = image.width;
+  const h = image.height;
+  let best: { cfg: AtlasConfig; score: number } | null = null;
+
+  for (let tileW = 24; tileW <= 256; tileW += 1) {
+    for (let tileH = 24; tileH <= 256; tileH += 1) {
+      for (let offsetX = 0; offsetX <= 16; offsetX += 1) {
+        if ((w - offsetX) <= 0 || (w - offsetX) % tileW !== 0) continue;
+        const cols = (w - offsetX) / tileW;
+        if (cols < 3 || cols > 16) continue;
+
+        for (let offsetY = 0; offsetY <= 16; offsetY += 1) {
+          if ((h - offsetY) <= 0 || (h - offsetY) % tileH !== 0) continue;
+          const rows = (h - offsetY) / tileH;
+          if (rows < 3 || rows > 16) continue;
+
+          const cellCount = cols * rows;
+          const cellArea = tileW * tileH;
+          const squarenessPenalty = Math.abs(tileW - tileH);
+          const tinyOffsetPenalty = offsetX + offsetY;
+          const score = cellCount * 10000 + cellArea - squarenessPenalty * 10 - tinyOffsetPenalty * 20;
+
+          if (!best || score > best.score) {
+            best = {
+              score,
+              cfg: {
+                tileW,
+                tileH,
+                spacingX: 0,
+                spacingY: 0,
+                offsetX,
+                offsetY
+              }
+            };
+          }
+        }
+      }
+    }
+  }
+
+  return best?.cfg ?? null;
+}
+
+function buildGridRects(config = atlasConfig()): SourceRect[] {
+  if (!tilesetImage.width || !tilesetImage.height) return [];
 
   const cols = Math.floor((tilesetImage.width - config.offsetX + config.spacingX) / (config.tileW + config.spacingX));
   const rows = Math.floor((tilesetImage.height - config.offsetY + config.spacingY) / (config.tileH + config.spacingY));
-  return {
-    cols: Math.max(0, cols),
-    rows: Math.max(0, rows),
-    count: Math.max(0, cols * rows)
-  };
+
+  const rects: SourceRect[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      rects.push({
+        sx: config.offsetX + col * (config.tileW + config.spacingX),
+        sy: config.offsetY + row * (config.tileH + config.spacingY),
+        sw: config.tileW,
+        sh: config.tileH
+      });
+    }
+  }
+
+  return rects;
 }
 
-function srcRectForTile(index: number, config = atlasConfig()) {
-  const grid = atlasGridSize(config);
-  if (grid.cols <= 0) {
-    return { sx: 0, sy: 0, sw: 0, sh: 0 };
-  }
-  const col = index % grid.cols;
-  const row = Math.floor(index / grid.cols);
-  return {
-    sx: config.offsetX + col * (config.tileW + config.spacingX),
-    sy: config.offsetY + row * (config.tileH + config.spacingY),
-    sw: config.tileW,
-    sh: config.tileH
-  };
+function setStatus(message: string) {
+  statusEl.textContent = message;
 }
 
 function ensureMapSize() {
@@ -142,55 +282,60 @@ function ensureMapSize() {
   mapTiles = next;
 }
 
-function clearMap() {
-  mapTiles.fill(-1);
-  renderMap();
-  setStatus("Map cleared.");
-}
-
 function setTool(next: Tool) {
   tool = next;
   paintBtn.classList.toggle("primary", next === "paint");
   eraseBtn.classList.toggle("primary", next === "erase");
 }
 
-function setStatus(message: string) {
-  statusEl.textContent = message;
+function setTileMode(mode: TileMode) {
+  tileMode = mode;
+  currentPaletteRects = mode === "auto" ? autoDetectedRects : buildGridRects();
+  selectedTileIndex = Math.min(selectedTileIndex, Math.max(0, currentPaletteRects.length - 1));
+  renderPalette();
+  renderMap();
 }
 
 function renderPalette() {
-  const config = atlasConfig();
-  const grid = atlasGridSize(config);
-
   paletteCtx.clearRect(0, 0, paletteCanvas.width, paletteCanvas.height);
-  if (!tilesetImage.width || grid.count === 0) return;
+  paletteCells = [];
 
-  const maxW = paletteCanvas.width - 8;
-  const maxH = paletteCanvas.height - 8;
-  const scale = Math.min(maxW / tilesetImage.width, maxH / tilesetImage.height);
-  const drawW = Math.max(1, Math.floor(tilesetImage.width * scale));
-  const drawH = Math.max(1, Math.floor(tilesetImage.height * scale));
-  const drawX = Math.floor((paletteCanvas.width - drawW) / 2);
-  const drawY = Math.floor((paletteCanvas.height - drawH) / 2);
-
-  paletteDraw = { x: drawX, y: drawY, w: drawW, h: drawH, scale };
-
-  paletteCtx.imageSmoothingEnabled = false;
-  paletteCtx.drawImage(tilesetImage, drawX, drawY, drawW, drawH);
-
-  if (selectedTileIndex >= 0) {
-    const rect = srcRectForTile(selectedTileIndex, config);
-    const x = drawX + Math.floor(rect.sx * scale);
-    const y = drawY + Math.floor(rect.sy * scale);
-    const w = Math.max(1, Math.floor(rect.sw * scale));
-    const h = Math.max(1, Math.floor(rect.sh * scale));
-
-    paletteCtx.strokeStyle = "#34d399";
-    paletteCtx.lineWidth = 2;
-    paletteCtx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  if (!tilesetImage.width || currentPaletteRects.length === 0) {
+    setStatus("No palette tiles available.");
+    return;
   }
 
-  setStatus(`Tiles: ${grid.count} (${grid.cols}x${grid.rows}). Selected: ${selectedTileIndex}`);
+  const pad = 8;
+  const slot = 68;
+  const cols = Math.max(1, Math.floor((paletteCanvas.width - pad * 2) / slot));
+
+  for (let i = 0; i < currentPaletteRects.length; i += 1) {
+    const rect = currentPaletteRects[i];
+    const cellX = pad + (i % cols) * slot;
+    const cellY = pad + Math.floor(i / cols) * slot;
+    const cellW = slot - 6;
+    const cellH = slot - 6;
+
+    paletteCells.push({ x: cellX, y: cellY, w: cellW, h: cellH, index: i });
+
+    paletteCtx.fillStyle = "rgba(22, 35, 60, 0.7)";
+    paletteCtx.fillRect(cellX, cellY, cellW, cellH);
+
+    const scale = Math.min((cellW - 8) / rect.sw, (cellH - 8) / rect.sh);
+    const drawW = Math.max(1, Math.floor(rect.sw * scale));
+    const drawH = Math.max(1, Math.floor(rect.sh * scale));
+    const drawX = cellX + Math.floor((cellW - drawW) / 2);
+    const drawY = cellY + Math.floor((cellH - drawH) / 2);
+
+    paletteCtx.imageSmoothingEnabled = false;
+    paletteCtx.drawImage(tilesetImage, rect.sx, rect.sy, rect.sw, rect.sh, drawX, drawY, drawW, drawH);
+
+    paletteCtx.strokeStyle = i === selectedTileIndex ? "#34d399" : "rgba(103, 128, 165, 0.7)";
+    paletteCtx.lineWidth = i === selectedTileIndex ? 2 : 1;
+    paletteCtx.strokeRect(cellX + 0.5, cellY + 0.5, cellW - 1, cellH - 1);
+  }
+
+  setStatus(`${tileMode === "auto" ? "Auto" : "Grid"} palette: ${currentPaletteRects.length} selectable tiles.`);
 }
 
 function renderMap() {
@@ -205,8 +350,6 @@ function renderMap() {
   mapCtx.fillStyle = "#081223";
   mapCtx.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
 
-  const config = atlasConfig();
-
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
       const mapIndex = row * cols + col;
@@ -214,8 +357,8 @@ function renderMap() {
       const dx = col * displaySize;
       const dy = row * displaySize;
 
-      if (tileIndex >= 0 && tilesetImage.width) {
-        const rect = srcRectForTile(tileIndex, config);
+      if (tileIndex >= 0 && tileIndex < currentPaletteRects.length && tilesetImage.width) {
+        const rect = currentPaletteRects[tileIndex];
         mapCtx.drawImage(tilesetImage, rect.sx, rect.sy, rect.sw, rect.sh, dx, dy, displaySize, displaySize);
       }
 
@@ -235,17 +378,13 @@ function mapCellFromPointer(event: PointerEvent) {
   const col = Math.floor(x / displaySize);
   const row = Math.floor(y / displaySize);
 
-  if (col < 0 || row < 0 || col >= cols || row >= rows) {
-    return null;
-  }
-
-  return { col, row, index: row * cols + col };
+  if (col < 0 || row < 0 || col >= cols || row >= rows) return null;
+  return { index: row * cols + col };
 }
 
 function applyAtPointer(event: PointerEvent) {
   const cell = mapCellFromPointer(event);
   if (!cell) return;
-
   mapTiles[cell.index] = tool === "paint" ? selectedTileIndex : -1;
   renderMap();
 }
@@ -254,9 +393,11 @@ function buildDocument(): MapDocument {
   ensureMapSize();
   const { cols, rows, cellSize } = mapConfig();
   return {
-    version: 1,
+    version: 2,
     tilesetSrc: tilesetSelect.value,
+    tileMode,
     atlas: atlasConfig(),
+    paletteRects: tileMode === "auto" ? currentPaletteRects : undefined,
     map: {
       cols,
       rows,
@@ -266,7 +407,7 @@ function buildDocument(): MapDocument {
   };
 }
 
-function applyDocument(doc: MapDocument) {
+function applyDocument(doc: MapDocument | (MapDocument & { version?: 1 })) {
   tilesetSelect.value = doc.tilesetSrc;
   tileWInput.value = String(doc.atlas.tileW);
   tileHInput.value = String(doc.atlas.tileH);
@@ -278,15 +419,23 @@ function applyDocument(doc: MapDocument) {
   mapRowsInput.value = String(doc.map.rows);
   cellSizeInput.value = String(doc.map.cellSize);
 
+  tileMode = doc.tileMode ?? "grid";
   mapTiles = [...doc.map.tiles];
   selectedTileIndex = 0;
-  loadTileset();
-  renderMap();
+
+  loadTileset(() => {
+    if (tileMode === "auto") {
+      currentPaletteRects = doc.paletteRects && doc.paletteRects.length > 0 ? doc.paletteRects : autoDetectedRects;
+    } else {
+      currentPaletteRects = buildGridRects();
+    }
+    renderPalette();
+    renderMap();
+  });
 }
 
 function saveLocal() {
-  const payload = buildDocument();
-  localStorage.setItem(LOCAL_KEY, JSON.stringify(payload));
+  localStorage.setItem(LOCAL_KEY, JSON.stringify(buildDocument()));
   setStatus("Saved to local storage.");
 }
 
@@ -298,8 +447,7 @@ function loadLocal() {
   }
 
   try {
-    const parsed = JSON.parse(raw) as MapDocument;
-    applyDocument(parsed);
+    applyDocument(JSON.parse(raw) as MapDocument);
     setStatus("Loaded from local storage.");
   } catch {
     setStatus("Failed to parse local map.");
@@ -307,8 +455,7 @@ function loadLocal() {
 }
 
 function downloadJson() {
-  const payload = buildDocument();
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify(buildDocument(), null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -322,8 +469,7 @@ function importJson(file: File) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const parsed = JSON.parse(String(reader.result)) as MapDocument;
-      applyDocument(parsed);
+      applyDocument(JSON.parse(String(reader.result)) as MapDocument);
       setStatus("Map JSON imported.");
     } catch {
       setStatus("Import failed: invalid JSON.");
@@ -332,42 +478,43 @@ function importJson(file: File) {
   reader.readAsText(file);
 }
 
-function loadTileset() {
+function loadTileset(onLoaded?: () => void) {
+  tilesetImage.onload = () => {
+    autoDetectedRects = detectSprites(tilesetImage);
+    if (!onLoaded) {
+      if (autoDetectedRects.length >= 8) {
+        setTileMode("auto");
+      } else {
+        const guessed = detectBestGridConfig(tilesetImage);
+        if (guessed) {
+          tileWInput.value = String(guessed.tileW);
+          tileHInput.value = String(guessed.tileH);
+          spacingXInput.value = String(guessed.spacingX);
+          spacingYInput.value = String(guessed.spacingY);
+          offsetXInput.value = String(guessed.offsetX);
+          offsetYInput.value = String(guessed.offsetY);
+        }
+        setTileMode("grid");
+      }
+    } else {
+      onLoaded();
+    }
+    setStatus(
+      `Tileset loaded: ${tilesetImage.width}x${tilesetImage.height}, auto-detected ${autoDetectedRects.length} sprites, mode=${tileMode}.`
+    );
+  };
   tilesetImage.src = tilesetSelect.value;
 }
 
-function onAtlasChanged() {
-  selectedTileIndex = 0;
-  renderPalette();
-  renderMap();
-}
-
 paletteCanvas.addEventListener("click", (event) => {
-  if (!tilesetImage.width) return;
-
   const rect = paletteCanvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
 
-  if (
-    x < paletteDraw.x ||
-    y < paletteDraw.y ||
-    x > paletteDraw.x + paletteDraw.w ||
-    y > paletteDraw.y + paletteDraw.h
-  ) {
-    return;
-  }
+  const hit = paletteCells.find((cell) => x >= cell.x && y >= cell.y && x <= cell.x + cell.w && y <= cell.y + cell.h);
+  if (!hit) return;
 
-  const imageX = (x - paletteDraw.x) / paletteDraw.scale;
-  const imageY = (y - paletteDraw.y) / paletteDraw.scale;
-  const cfg = atlasConfig();
-  const grid = atlasGridSize(cfg);
-  const tx = Math.floor((imageX - cfg.offsetX) / (cfg.tileW + cfg.spacingX));
-  const ty = Math.floor((imageY - cfg.offsetY) / (cfg.tileH + cfg.spacingY));
-
-  if (tx < 0 || ty < 0 || tx >= grid.cols || ty >= grid.rows) return;
-
-  selectedTileIndex = ty * grid.cols + tx;
+  selectedTileIndex = hit.index;
   renderPalette();
 });
 
@@ -395,27 +542,29 @@ newMapBtn.onclick = () => {
   renderMap();
   setStatus("New map initialized.");
 };
-clearBtn.onclick = () => clearMap();
+clearBtn.onclick = () => {
+  mapTiles.fill(-1);
+  renderMap();
+  setStatus("Map cleared.");
+};
 saveLocalBtn.onclick = () => saveLocal();
 loadLocalBtn.onclick = () => loadLocal();
 downloadBtn.onclick = () => downloadJson();
 importBtn.onclick = () => importFileInput.click();
 importFileInput.onchange = () => {
   const file = importFileInput.files?.[0];
-  if (file) {
-    importJson(file);
-  }
+  if (file) importJson(file);
 };
 
-[
-  tilesetSelect,
-  tileWInput,
-  tileHInput,
-  spacingXInput,
-  spacingYInput,
-  offsetXInput,
-  offsetYInput
-].forEach((el) => el.addEventListener("change", onAtlasChanged));
+tilesetSelect.addEventListener("change", () => loadTileset());
+
+[tileWInput, tileHInput, spacingXInput, spacingYInput, offsetXInput, offsetYInput].forEach((el) =>
+  el.addEventListener("change", () => {
+    currentPaletteRects = buildGridRects();
+    selectedTileIndex = 0;
+    setTileMode("grid");
+  })
+);
 
 [mapColsInput, mapRowsInput, cellSizeInput, zoomInput].forEach((el) =>
   el.addEventListener("change", () => {
@@ -423,6 +572,21 @@ importFileInput.onchange = () => {
     renderMap();
   })
 );
+
+const autoBtn = document.createElement("button");
+autoBtn.textContent = "Use Auto Palette";
+autoBtn.onclick = () => setTileMode("auto");
+const gridBtn = document.createElement("button");
+gridBtn.textContent = "Use Grid Palette";
+gridBtn.onclick = () => setTileMode("grid");
+
+const panel = document.querySelector(".panel");
+if (panel) {
+  const wrap = document.createElement("div");
+  wrap.className = "toolbar";
+  wrap.append(autoBtn, gridBtn);
+  panel.insertBefore(wrap, panel.querySelector(".status"));
+}
 
 setTool("paint");
 ensureMapSize();
