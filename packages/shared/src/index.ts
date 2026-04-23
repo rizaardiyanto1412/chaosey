@@ -47,6 +47,7 @@ export interface PlayerStatus {
 
 export interface GameState {
   roomCode: string;
+  hostId: string;
   roomState: RoomState;
   tick: number;
   level: LevelData;
@@ -80,8 +81,23 @@ export interface JoinedRoomPayload {
   roles: PlayerRole[];
 }
 
+export type RoomVisibility = "public" | "private";
+
 export interface RoomMetadata {
   roomCode: string;
+  visibility: RoomVisibility;
+  roomState?: RoomState;
+  playerCount?: number;
+  maxClients?: number;
+}
+
+export interface LobbyRoomSummary {
+  roomId: string;
+  roomCode: string;
+  visibility: RoomVisibility;
+  roomState: RoomState;
+  playerCount: number;
+  maxClients: number;
 }
 
 export const ROLES: PlayerRole[] = ["W", "A", "S", "D"];

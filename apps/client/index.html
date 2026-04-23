@@ -3,119 +3,770 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WASD Web Co-op</title>
+    <title>Key Chaos</title>
     <style>
       :root {
         color-scheme: light;
-        --bg: #0f172a;
-        --panel: #111827;
-        --text: #f8fafc;
-        --accent: #f97316;
-        --muted: #9ca3af;
+        --bg: #07131a;
+        --text: #fff9ea;
+        --muted: rgba(248, 239, 214, 0.92);
+        --line: rgba(255, 243, 214, 0.18);
+        --panel: rgba(11, 27, 29, 0.74);
+        --panel-strong: rgba(7, 18, 22, 0.86);
+        --wood: #7a4b24;
+        --wood-dark: #4c2d14;
+        --gold: #f7d37d;
+        --leaf: #9ecf55;
       }
+      html,
       body {
         margin: 0;
+        min-height: 100%;
+        overflow: hidden;
         font-family: "Trebuchet MS", "Segoe UI", sans-serif;
-        background: radial-gradient(circle at top, #1e293b, var(--bg));
+        background: var(--bg);
         color: var(--text);
       }
-      .layout {
+      button,
+      input {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+
+      #app {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        background: radial-gradient(circle at top, #103744, #07131a 72%);
+      }
+
+      #game-shell,
+      #game {
+        position: absolute;
+        inset: 0;
+      }
+
+      #game canvas {
+        display: block;
+      }
+
+      .screen {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .screen[hidden] {
+        display: none;
+      }
+
+      .menu-screen {
+        background:
+          linear-gradient(90deg, rgba(2, 12, 16, 0.78) 0%, rgba(2, 12, 16, 0.46) 38%, rgba(2, 12, 16, 0.12) 72%),
+          linear-gradient(180deg, rgba(3, 13, 16, 0.08) 0%, rgba(3, 13, 16, 0.55) 100%),
+          url("/assets/ui/main-menu-background.png") center center / cover no-repeat;
+      }
+
+      .menu-layout {
+        width: min(560px, 100%);
         display: grid;
-        grid-template-columns: 360px 1fr;
-        min-height: 100vh;
+        gap: 18px;
+        justify-items: start;
+        margin-right: auto;
       }
-      .panel {
-        padding: 20px;
-        background: color-mix(in srgb, var(--panel) 92%, black);
-        border-right: 1px solid #334155;
+
+      .brand {
+        display: grid;
+        gap: 10px;
+        max-width: 420px;
       }
-      .panel h1 {
-        margin-top: 0;
+
+      .eyebrow {
+        font-size: 0.82rem;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: #cff7d0;
       }
-      .panel input, .panel button {
+
+      .brand h1 {
+        margin: 0;
+        font-size: clamp(3rem, 8vw, 5.8rem);
+        line-height: 0.95;
+        color: #fff6dd;
+        text-shadow: 0 4px 22px rgba(0, 0, 0, 0.42);
+      }
+
+      .brand p {
+        margin: 0;
+        max-width: 28rem;
+        font-size: 1.02rem;
+        line-height: 1.55;
+        color: #f3ead0;
+        text-shadow: 0 2px 14px rgba(0, 0, 0, 0.4);
+      }
+
+      .menu-card,
+      .modal-card,
+      .hud-panel {
+        backdrop-filter: blur(16px);
+        background: linear-gradient(180deg, rgba(14, 42, 44, 0.92), rgba(6, 18, 24, 0.88));
+        border: 1px solid var(--line);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.38);
+      }
+
+      .menu-card {
+        width: min(440px, 100%);
+        border-radius: 28px;
+        padding: 22px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .menu-section-title {
+        margin: 0;
+        font-size: 0.95rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #e9d8a6;
+      }
+
+      .field {
+        display: grid;
+        gap: 8px;
+      }
+
+      .field label,
+      .hint {
+        font-size: 0.9rem;
+        color: #efe3bf;
+      }
+
+      .field input {
         width: 100%;
         box-sizing: border-box;
-        margin-bottom: 10px;
-        padding: 10px 12px;
-        border-radius: 8px;
-        border: 1px solid #334155;
+        padding: 14px 16px;
+        border-radius: 16px;
+        border: 1px solid rgba(245, 232, 187, 0.18);
+        background: rgba(249, 245, 230, 0.12);
+        color: var(--text);
+        outline: none;
       }
-      .panel button {
-        cursor: pointer;
-        border: none;
-        background: var(--accent);
-        color: #111827;
+
+      .field input::placeholder {
+        color: rgba(244, 238, 214, 0.5);
+      }
+
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .checkbox-row input {
+        width: 18px;
+        height: 18px;
+      }
+
+      .menu-actions {
+        display: grid;
+        gap: 12px;
+      }
+
+      .menu-button,
+      .hud-button {
+        border: 0;
+        color: #fff7e1;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+        transition:
+          transform 140ms ease,
+          box-shadow 140ms ease,
+          filter 140ms ease;
+      }
+
+      .menu-button {
+        position: relative;
+        overflow: hidden;
+        min-height: 72px;
+        padding: 18px 24px;
+        border-radius: 24px;
+        font-size: 1.3rem;
+        text-align: left;
+        background:
+          radial-gradient(circle at 16% 28%, rgba(255, 240, 176, 0.26), transparent 18%),
+          linear-gradient(180deg, #9a6530 0%, #78441f 48%, #643716 100%);
+        box-shadow:
+          inset 0 2px 0 rgba(255, 241, 197, 0.18),
+          inset 0 -3px 0 rgba(58, 29, 10, 0.42),
+          0 14px 28px rgba(0, 0, 0, 0.26);
+      }
+
+      .menu-button::before {
+        content: "";
+        position: absolute;
+        inset: 4px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 228, 150, 0.22);
+      }
+
+      .menu-button:hover,
+      .menu-button:focus-visible,
+      .hud-button:hover,
+      .hud-button:focus-visible {
+        transform: translateY(-2px);
+        filter: brightness(1.03);
+      }
+
+      .menu-button.secondary {
+        background:
+          linear-gradient(180deg, rgba(229, 244, 185, 0.22), rgba(125, 159, 61, 0.22)),
+          linear-gradient(180deg, #26503a 0%, #173528 100%);
+      }
+
+      .menu-button.ghost {
+        background:
+          linear-gradient(180deg, rgba(252, 239, 204, 0.11), rgba(252, 239, 204, 0.05)),
+          rgba(7, 19, 26, 0.55);
+      }
+
+      .menu-status {
+        min-height: 1.35rem;
+        color: #fff0c3;
+        font-size: 0.94rem;
+      }
+
+      .choice-grid,
+      .server-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .choice-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .choice-card,
+      .server-card {
+        border-radius: 20px;
+        border: 1px solid rgba(255, 228, 150, 0.18);
+        background: rgba(248, 242, 221, 0.08);
+        padding: 16px;
+      }
+
+      .choice-card {
+        text-align: left;
+      }
+
+      .choice-card.active {
+        border-color: rgba(247, 211, 125, 0.58);
+        background: rgba(247, 211, 125, 0.13);
+      }
+
+      .choice-card strong,
+      .server-card strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 1.02rem;
+        color: #fff5d8;
+      }
+
+      .choice-card span,
+      .server-card span {
+        color: #f1e6c8;
+        font-size: 0.92rem;
+        line-height: 1.45;
+      }
+
+      .server-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .server-card-copy {
+        display: grid;
+        gap: 6px;
+      }
+
+      .server-card button {
+        flex: 0 0 auto;
+      }
+
+      .server-empty {
+        padding: 18px;
+        border-radius: 18px;
+        background: rgba(248, 242, 221, 0.06);
+        color: #f1e6c8;
+        text-align: center;
+      }
+
+      .inline-form {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .inline-form input {
+        flex: 1 1 auto;
+      }
+
+      .room-code-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px 18px;
+        border-radius: 18px;
+        background: rgba(247, 211, 125, 0.14);
+        border: 1px solid rgba(247, 211, 125, 0.42);
+        color: #fff4d5;
+        font-size: 1.65rem;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+      }
+
+      .loading-screen {
+        z-index: 8;
+        background:
+          linear-gradient(180deg, rgba(4, 18, 20, 0.62), rgba(3, 9, 13, 0.88)),
+          url("/assets/ui/main-menu-background.png") center center / cover no-repeat;
+      }
+
+      .loading-card {
+        width: min(520px, 100%);
+        border-radius: 28px;
+        padding: 28px;
+        text-align: center;
+      }
+
+      .loading-card h2,
+      .modal-card h2 {
+        margin: 0 0 10px;
+        font-size: clamp(1.8rem, 3vw, 2.4rem);
+      }
+
+      .loading-card p,
+      .modal-card p,
+      .modal-card li {
+        color: #f1e6c8;
+        line-height: 1.55;
+      }
+
+      .loading-bar {
+        margin-top: 18px;
+        height: 12px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(255, 248, 225, 0.12);
+      }
+
+      .loading-bar > span {
+        display: block;
+        width: 36%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #86c34c, #f7d37d, #86c34c);
+        animation: load-shimmer 1.2s ease-in-out infinite;
+      }
+
+      .hud {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 6;
+      }
+
+      .hud[hidden] {
+        display: none;
+      }
+
+      .lobby-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        pointer-events: none;
+        z-index: 7;
+        background: linear-gradient(180deg, rgba(2, 13, 18, 0.18), rgba(2, 13, 18, 0.4));
+      }
+
+      .lobby-overlay[hidden] {
+        display: none;
+      }
+
+      .lobby-card {
+        width: min(520px, 100%);
+        border-radius: 28px;
+        padding: 28px;
+        text-align: center;
+      }
+
+      .lobby-card h2 {
+        margin: 0 0 10px;
+        font-size: clamp(1.8rem, 3vw, 2.5rem);
+        color: #fff7e1;
+      }
+
+      .lobby-card p {
+        margin: 0;
+        color: #f1e6c8;
+        line-height: 1.6;
+      }
+
+      .lobby-badge-row {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 18px 0 14px;
+      }
+
+      .lobby-badge {
+        padding: 10px 14px;
+        border-radius: 999px;
+        background: rgba(247, 211, 125, 0.14);
+        border: 1px solid rgba(247, 211, 125, 0.3);
+        color: #fff2cc;
+        font-size: 0.95rem;
         font-weight: 700;
       }
-      .meta {
-        font-size: 14px;
-        color: var(--muted);
+
+      .lobby-footnote {
+        margin-top: 12px;
+        font-size: 0.92rem;
+        color: #efe3bf;
       }
-      .badge {
-        font-size: 24px;
-        margin: 12px 0;
-        color: #fde68a;
+
+      .hud-panel {
+        position: absolute;
+        pointer-events: auto;
+        border-radius: 22px;
+        padding: 16px 18px;
       }
-      #game {
-        position: relative;
+
+      .hud-top-left {
+        top: 18px;
+        left: 18px;
+        width: min(340px, calc(100vw - 36px));
         display: grid;
-        place-items: center;
-      }
-      #game canvas {
-        border: 1px solid #334155;
-        border-radius: 14px;
-      }
-      .touch {
-        display: grid;
-        grid-template-columns: repeat(3, 56px);
         gap: 8px;
-        justify-content: center;
-        margin-top: 16px;
       }
+
+      .hud-top-right {
+        top: 18px;
+        right: 18px;
+        display: flex;
+        gap: 10px;
+      }
+
+      .hud-bottom-left {
+        left: 18px;
+        bottom: 18px;
+        width: min(360px, calc(100vw - 36px));
+        display: grid;
+        gap: 8px;
+      }
+
+      .hud-panel h2 {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+
+      .hud-meta {
+        color: var(--gold);
+        font-size: 1.05rem;
+        font-weight: 700;
+      }
+
+      .hud-copy,
+      .meta-list {
+        font-size: 0.92rem;
+        color: #f1e6c8;
+        white-space: pre-line;
+      }
+
+      .hud-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .hud-button {
+        min-width: 112px;
+        padding: 12px 16px;
+        border-radius: 16px;
+        background:
+          linear-gradient(180deg, rgba(251, 224, 151, 0.22), rgba(144, 98, 42, 0.3)),
+          rgba(89, 51, 22, 0.9);
+      }
+
+      .touch {
+        position: absolute;
+        right: 18px;
+        bottom: 18px;
+        display: grid;
+        grid-template-columns: repeat(3, 62px);
+        gap: 10px;
+        pointer-events: auto;
+      }
+
       .touch button {
-        height: 56px;
-        border-radius: 10px;
+        width: 62px;
+        height: 62px;
+        border: 0;
+        border-radius: 18px;
+        background: rgba(8, 20, 23, 0.72);
+        color: #fff4d5;
+        border: 1px solid rgba(255, 233, 183, 0.18);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
-      @media (max-width: 900px) {
-        .layout {
-          grid-template-columns: 1fr;
+
+      .modal-backdrop {
+        z-index: 12;
+        background: rgba(3, 11, 14, 0.72);
+      }
+
+      .modal-card {
+        width: min(560px, 100%);
+        border-radius: 28px;
+        padding: 28px;
+      }
+
+      .modal-card ul {
+        margin: 0 0 18px;
+        padding-left: 18px;
+      }
+
+      .modal-stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+
+      @keyframes load-shimmer {
+        0%,
+        100% {
+          transform: translateX(-85%);
         }
-        .panel {
-          border-right: none;
-          border-bottom: 1px solid #334155;
+        50% {
+          transform: translateX(180%);
+        }
+      }
+
+      @media (max-width: 900px) {
+        .screen {
+          align-items: flex-end;
+          padding: 16px;
+        }
+
+        .menu-layout {
+          width: 100%;
+          justify-items: stretch;
+        }
+
+        .brand {
+          max-width: none;
+        }
+
+        .brand h1 {
+          font-size: clamp(2.6rem, 15vw, 4.4rem);
+        }
+
+        .hud-top-left,
+        .hud-bottom-left {
+          width: min(100%, calc(100vw - 32px));
+        }
+
+        .touch {
+          grid-template-columns: repeat(3, 56px);
+          gap: 8px;
+        }
+
+        .touch button {
+          width: 56px;
+          height: 56px;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .hud-top-right {
+          top: auto;
+          right: 16px;
+          bottom: 150px;
+          flex-direction: column;
+        }
+
+        .hud-button {
+          min-width: 0;
         }
       }
     </style>
   </head>
   <body>
-    <div class="layout">
-      <aside class="panel">
-        <h1>Tori Co-op</h1>
-        <a href="/editor.html" style="display:block;color:#93c5fd;margin-bottom:10px">Open Map Editor</a>
-        <input id="name" placeholder="Player name" maxlength="24" />
-        <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:#cbd5e1;font-size:14px;">
-          <input id="debugSolo" type="checkbox" style="width:auto;margin:0;" />
-          Debug mode (solo start)
-        </label>
-        <button id="create">Create Room</button>
-        <input id="roomCode" placeholder="Room code" maxlength="4" />
-        <button id="join">Join Room</button>
-        <button id="ready">Toggle Ready</button>
-        <button id="start">Start (Host)</button>
-        <button id="restart">Restart Round (Host)</button>
-        <div class="badge" id="role">Role: -</div>
-        <div id="room">Room: -</div>
-        <div id="state">State: -</div>
-        <div id="latency">RTT: - ms</div>
-        <div id="players" class="meta"></div>
+    <div id="app">
+      <div id="game-shell">
+        <main id="game"></main>
+      </div>
+
+      <section class="screen menu-screen" id="menuScreen">
+        <div class="menu-layout">
+          <div class="brand">
+            <div class="eyebrow">Fast chaotic co-op</div>
+            <h1>Key Chaos</h1>
+            <p>Key Chaos is a fast, chaotic online co-op game for 2-4 players where one tiny mistake can ruin the whole run.</p>
+          </div>
+
+          <div class="menu-card">
+            <h2 class="menu-section-title">Enter The Forest</h2>
+            <div class="menu-actions">
+              <button id="create" class="menu-button" type="button">Create Room</button>
+              <button id="join" class="menu-button secondary" type="button">Join Room</button>
+              <button id="howToPlay" class="menu-button ghost" type="button">How To Play</button>
+            </div>
+            <div class="hint">Create a public or private room, or jump into any public lobby that still has free slots.</div>
+            <div class="menu-status" id="menuStatus"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen loading-screen" id="loadingScreen" hidden>
+        <div class="loading-card menu-card">
+          <h2>Preparing The Map</h2>
+          <p id="loadingLabel">Loading the forest and connecting your room.</p>
+          <div class="loading-bar"><span></span></div>
+        </div>
+      </section>
+
+      <section class="hud" id="hud" hidden>
+        <div class="hud-panel hud-top-left">
+          <h2 id="role">Role: -</h2>
+          <div class="hud-meta" id="room">Room: -</div>
+          <div class="hud-copy" id="state">State: -</div>
+          <div class="hud-copy" id="latency">RTT: - ms</div>
+          <div class="hud-actions">
+            <button id="quitGame" class="hud-button" type="button">Quit</button>
+          </div>
+        </div>
+
+        <div class="hud-panel hud-bottom-left">
+          <div class="meta-list" id="players">Players: -</div>
+          <div class="hint">Keyboard: each player controls only their assigned letter. Touch controls stay available on mobile.</div>
+          <a href="/editor.html" style="color:#ffe9b7">Open Map Editor</a>
+        </div>
 
         <div class="touch">
-          <div></div><button data-role="W">W</button><div></div>
-          <button data-role="A">A</button><button data-role="S">S</button><button data-role="D">D</button>
+          <div></div><button data-role="W" type="button">W</button><div></div>
+          <button data-role="A" type="button">A</button><button data-role="S" type="button">S</button><button data-role="D" type="button">D</button>
           <div></div><div></div><div></div>
         </div>
-      </aside>
-      <main id="game"></main>
+      </section>
+
+      <section class="lobby-overlay" id="lobbyOverlay" hidden>
+        <div class="lobby-card modal-card">
+          <h2 id="lobbyOverlayTitle">Waiting For Host</h2>
+          <p id="lobbyOverlayText">The host is choosing when to start. Stay ready for the run.</p>
+          <div class="lobby-badge-row">
+            <div class="lobby-badge" id="lobbyOverlayPlayers">Players: 1/4</div>
+            <div class="lobby-badge" id="lobbyOverlayRoom">Room: ----</div>
+          </div>
+          <div class="lobby-footnote" id="lobbyOverlayFootnote">The game starts automatically for you as soon as the host presses start.</div>
+        </div>
+      </section>
+
+      <section class="screen modal-backdrop" id="howToModal" hidden>
+        <div class="modal-card">
+          <h2>How To Play</h2>
+          <ul>
+            <li>One room supports up to four players, each controlling one of `W`, `A`, `S`, or `D`.</li>
+            <li>Create a room, choose public or private, then share the four-letter code if needed.</li>
+            <li>The host can start as soon as at least two players are in, or wait for a full four-player team.</li>
+            <li>Guide the squirrel around hazards and reach the goal together.</li>
+          </ul>
+          <div class="modal-actions">
+            <button id="closeHowTo" class="menu-button secondary" type="button">Back</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen modal-backdrop" id="createRoomModal" hidden>
+        <div class="modal-card">
+          <div class="modal-stack">
+            <div>
+              <h2>Create Room</h2>
+              <p>Choose who can discover this room. Public rooms appear in the join list. Private rooms require the code.</p>
+            </div>
+            <div class="choice-grid">
+              <button id="visibilityPublic" class="choice-card active" type="button">
+                <strong>Public Room</strong>
+                <span>Visible in the server browser. Great for quick drop-in co-op.</span>
+              </button>
+              <button id="visibilityPrivate" class="choice-card" type="button">
+                <strong>Private Room</strong>
+                <span>Hidden from the browser. Friends join only with the room code.</span>
+              </button>
+            </div>
+            <label class="checkbox-row">
+              <input id="debugSolo" type="checkbox" />
+              Debug mode for solo start
+            </label>
+            <div id="createRoomResult" hidden>
+              <div class="field">
+                <label>Room code</label>
+                <div class="room-code-badge" id="createdRoomCode">----</div>
+              </div>
+              <div class="hint" id="createdRoomMeta">Visibility: Public</div>
+              <div class="hint" id="createdRoomPlayers">Players in room: 1/4</div>
+            </div>
+            <div class="menu-status" id="createRoomStatus"></div>
+            <div class="modal-actions">
+              <button id="closeCreateRoom" class="menu-button ghost" type="button">Close</button>
+              <button id="confirmCreateRoom" class="menu-button" type="button">Create Room</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen modal-backdrop" id="joinRoomModal" hidden>
+        <div class="modal-card">
+          <div class="modal-stack">
+            <div>
+              <h2>Join Room</h2>
+              <p>Pick any public room with an open slot, or use an invite code for a private room.</p>
+            </div>
+            <div class="modal-actions" style="justify-content:flex-start;">
+              <button id="refreshRooms" class="menu-button secondary" type="button">Refresh List</button>
+            </div>
+            <div class="server-list" id="roomList"></div>
+            <div class="field">
+              <label for="privateRoomCode">Private room code</label>
+              <div class="inline-form">
+                <input id="privateRoomCode" placeholder="ABCD" maxlength="4" />
+                <button id="joinByCode" class="menu-button" type="button">Join</button>
+              </div>
+            </div>
+            <div class="menu-status" id="joinRoomStatus"></div>
+            <div class="modal-actions">
+              <button id="closeJoinRoom" class="menu-button ghost" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

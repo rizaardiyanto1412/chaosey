@@ -13,6 +13,7 @@ import {
   circlesIntersectsRect,
   composeDirection,
   emptyInputState,
+  type LobbyRoomSummary,
   roleBundlesForPlayerCount,
   type FailReason,
   type GameState,
@@ -20,7 +21,9 @@ import {
   type JoinedRoomPayload,
   type PlayerRole,
   type PlayerStatus,
+  type RoomMetadata,
   type RoomState,
+  type RoomVisibility,
   type RoundResult
 } from "@wasd/shared";
 
@@ -88,7 +91,10 @@ function resolveDefaultMapPath(): string {
 
 const defaultMapPath = resolveDefaultMapPath();
 
-const playerSchema = z.object({ playerName: z.string().min(1).max(24) });
+const roomJoinSchema = z.object({
+  playerName: z.string().trim().max(24).optional(),
+  reconnectPlayerId: z.string().uuid().optional()
+});
 
 function now() {
   return Date.now();
@@ -218,6 +224,7 @@ class WasdRoom extends Room {
   private roomCode = "";
   private hostId = "";
   private debugSolo = false;
+  private visibility: RoomVisibility = "public";
   private roomState: RoomState = "lobby";
   private tick = 0;
   private players = new Map<string, RoomPlayer>();
@@ -230,11 +237,37 @@ class WasdRoom extends Room {
   private readonly snapshotIntervalMs = Math.max(1000 / Math.max(1, snapshotRate), 33);
   private lastSnapshotAt = 0;
 
-  onCreate(options?: { debugSolo?: boolean }) {
+  private updateRoomMetadata() {
+    const metadata: RoomMetadata = {
+      roomCode: this.roomCode,
+      visibility: this.visibility,
+      roomState: this.roomState,
+      playerCount: this.players.size,
+      maxClients: this.maxClients
+    };
+    this.setMetadata(metadata);
+  }
+
+  private flushJoinState(
+    client: { send: (type: string, payload?: unknown) => void },
+    joinedPayload: JoinedRoomPayload,
+    roles: PlayerRole[]
+  ) {
+    this.clock.setTimeout(() => {
+      client.send("joined_room", joinedPayload);
+      client.send("assign_role", { roles });
+      this.emitPlayerStatus();
+      this.emitRoomState();
+      this.emitSnapshot(true);
+    }, 0);
+  }
+
+  onCreate(options?: { debugSolo?: boolean; visibility?: RoomVisibility }) {
     this.maxClients = 4;
     this.debugSolo = Boolean(options?.debugSolo);
+    this.visibility = options?.visibility === "private" ? "private" : "public";
     this.roomCode = nextRoomCode();
-    this.setMetadata({ roomCode: this.roomCode, debugSolo: this.debugSolo });
+    this.updateRoomMetadata();
 
     const loaded = loadLevelFromTiledJson(defaultMapPath);
     if (loaded) {
@@ -295,16 +328,29 @@ class WasdRoom extends Room {
     this.clock.setInterval(() => this.serverTick(), 1000 / tickRate);
   }
 
-  onJoin(client: { sessionId: string; send: (type: string, payload?: unknown) => void }, options: { playerName?: string }) {
-    const parsed = playerSchema.safeParse({ playerName: options?.playerName ?? "" });
+  onJoin(
+    client: { sessionId: string; send: (type: string, payload?: unknown) => void },
+    options: { playerName?: string; reconnectPlayerId?: string }
+  ) {
+    const parsed = roomJoinSchema.safeParse({
+      playerName: options?.playerName,
+      reconnectPlayerId: options?.reconnectPlayerId
+    });
     if (!parsed.success) {
       throw new ServerError(400, "Invalid player name.");
     }
 
-    const name = parsed.data.playerName.trim();
-    const reconnect = [...this.players.values()].find((p) => p.name === name && !p.connected);
+    const requestedName = parsed.data.playerName?.trim();
+    const reconnectPlayerId = parsed.data.reconnectPlayerId;
+    const name = requestedName && requestedName.length > 0 ? requestedName : `Player ${this.players.size + 1}`;
+    const reconnect = reconnectPlayerId
+      ? this.players.get(reconnectPlayerId)
+      : [...this.players.values()].find((p) => p.name === name && !p.connected);
 
-    if (reconnect) {
+    if (reconnect && (reconnectPlayerId !== undefined || !reconnect.connected)) {
+      if (reconnect.sessionId && reconnect.sessionId !== client.sessionId) {
+        this.sessionToPlayerId.delete(reconnect.sessionId);
+      }
       reconnect.connected = true;
       reconnect.sessionId = client.sessionId;
       reconnect.disconnectedAt = undefined;
@@ -316,11 +362,7 @@ class WasdRoom extends Room {
         playerId: reconnect.playerId,
         roles: reconnect.roles
       };
-      client.send("joined_room", joinedPayload);
-      client.send("assign_role", { roles: reconnect.roles });
-      this.emitPlayerStatus();
-      this.emitRoomState();
-      this.emitSnapshot(true);
+      this.flushJoinState(client, joinedPayload, reconnect.roles);
       return;
     }
 
@@ -347,17 +389,14 @@ class WasdRoom extends Room {
     }
 
     this.rebalanceRoles();
+    this.updateRoomMetadata();
 
     const joinedPayload: JoinedRoomPayload = {
       roomCode: this.roomCode,
       playerId,
       roles: newPlayer.roles
     };
-
-    client.send("joined_room", joinedPayload);
-    this.emitPlayerStatus();
-    this.emitRoomState();
-    this.emitSnapshot(true);
+    this.flushJoinState(client, joinedPayload, newPlayer.roles);
   }
 
   onLeave(client: { sessionId: string }) {
@@ -372,6 +411,7 @@ class WasdRoom extends Room {
     }
 
     this.emitPlayerStatus();
+    this.updateRoomMetadata();
   }
 
   onDispose() {
@@ -406,10 +446,12 @@ class WasdRoom extends Room {
 
   private emitPlayerStatus() {
     this.broadcast("player_status", { players: this.serializePlayers() });
+    this.updateRoomMetadata();
   }
 
   private emitRoomState() {
     this.broadcast("room_state", { state: this.roomState, countdownRemainingMs: 0 });
+    this.updateRoomMetadata();
   }
 
   private emitSnapshot(force = false) {
@@ -421,6 +463,7 @@ class WasdRoom extends Room {
 
     const payload: GameState = {
       roomCode: this.roomCode,
+      hostId: this.hostId,
       roomState: this.roomState,
       tick: this.tick,
       level: this.level,
@@ -476,11 +519,7 @@ class WasdRoom extends Room {
     if (this.debugSolo) {
       return this.players.size >= 1;
     }
-    if (this.players.size < 2) return false;
-    for (const player of this.players.values()) {
-      if (!player.ready) return false;
-    }
-    return true;
+    return this.players.size >= 2;
   }
 
   private startRound() {
@@ -598,6 +637,28 @@ class WasdRoom extends Room {
 const app = express();
 app.use(cors({ origin: clientOrigin }));
 app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/rooms", async (_req, res) => {
+  const rooms = await matchMaker.query({ name: "wasd_room" });
+  const summaries: LobbyRoomSummary[] = rooms
+    .map((room) => {
+      const metadata = room.metadata as Partial<RoomMetadata> | undefined;
+      const visibility: RoomVisibility = metadata?.visibility === "private" ? "private" : "public";
+      const roomState: LobbyRoomSummary["roomState"] =
+        metadata?.roomState === "playing" || metadata?.roomState === "countdown" || metadata?.roomState === "round_end"
+          ? metadata.roomState
+          : "lobby";
+      return {
+        roomId: room.roomId,
+        roomCode: String(metadata?.roomCode ?? ""),
+        visibility,
+        roomState,
+        playerCount: Number(metadata?.playerCount ?? 0),
+        maxClients: Number(metadata?.maxClients ?? 4)
+      };
+    })
+    .filter((room) => room.visibility === "public" && room.roomCode.length > 0 && room.playerCount < room.maxClients);
+  res.json({ rooms: summaries });
+});
 app.get("/rooms/:roomCode", async (req, res) => {
   const roomCode = String(req.params.roomCode ?? "").toUpperCase();
   const rooms = await matchMaker.query({ name: "wasd_room" });
