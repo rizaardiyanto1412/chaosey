@@ -88,15 +88,13 @@ export const ROLES: PlayerRole[] = ["W", "A", "S", "D"];
 
 export const DEFAULT_LEVEL: LevelData = {
   id: "level-1",
-  width: 1200,
-  height: 800,
-  spawn: { x: 120, y: 400 },
+  width: 1856,
+  height: 1024,
+  spawn: { x: 180, y: 300 },
   playerRadius: 18,
   moveSpeed: 220,
   obstacles: [
-    { id: "hazard-1", kind: "hazard", position: { x: 450, y: 250 }, size: { x: 80, y: 80 }, velocity: { x: 0, y: 80 } },
-    { id: "hazard-2", kind: "hazard", position: { x: 700, y: 540 }, size: { x: 110, y: 70 }, velocity: { x: 0, y: -70 } },
-    { id: "goal", kind: "goal", position: { x: 1080, y: 390 }, size: { x: 70, y: 130 } }
+    { id: "goal", kind: "goal", position: { x: 1660, y: 190 }, size: { x: 120, y: 120 } }
   ]
 };
 

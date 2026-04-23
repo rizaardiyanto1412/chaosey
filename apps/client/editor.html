@@ -124,8 +124,16 @@
 
         <label>Tileset</label>
         <select id="tilesetSelect">
+          <option value="/assets/tilesets/grass-water-autotile-v1.png" selected>grass-water-autotile-v1 (auto-smooth recommended)</option>
+          <option value="/assets/tilesets/grass-water-tileset-v2.png">grass-water-tileset-v2</option>
           <option value="/assets/tilesets/grass-water-tileset-v1.png">grass-water-tileset-v1</option>
         </select>
+        <div id="tilesetQuickPick" class="toolbar" style="margin-top:8px"></div>
+        <div class="toolbar">
+          <button id="uploadTilesetBtn">Upload Tileset</button>
+          <button id="reloadTilesetBtn">Reload Tileset</button>
+        </div>
+        <input id="tilesetFile" type="file" accept="image/png,image/webp,image/jpeg" style="display:none" />
 
         <div class="grid">
           <div>
@@ -179,6 +187,7 @@
           <button id="newMapBtn">New Map</button>
           <button id="clearBtn">Clear Map</button>
         </div>
+        <button id="autoTerrainBtn" style="margin-top:8px">Auto Terrain: Off</button>
 
         <div class="toolbar">
           <button id="saveLocalBtn">Save Local</button>
@@ -196,6 +205,11 @@
           <section class="card">
             <strong>Palette</strong>
             <div class="status">Click tile to select.</div>
+            <div class="toolbar">
+              <button id="palettePrevBtn">Prev Page</button>
+              <button id="paletteNextBtn">Next Page</button>
+            </div>
+            <div class="status" id="palettePageInfo">Page 1/1</div>
             <canvas id="palette" width="306" height="340"></canvas>
           </section>
 

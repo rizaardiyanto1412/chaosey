@@ -1,7 +1,9 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import path from "node:path";
 import { Room, ServerError, matchMaker } from "@colyseus/core";
 import { Server } from "colyseus";
 import { WebSocketTransport } from "@colyseus/ws-transport";
@@ -33,13 +35,58 @@ interface RoomPlayer {
   disconnectedAt?: number;
 }
 
+interface SolidRect {
+  position: { x: number; y: number };
+  size: { x: number; y: number };
+}
+
+interface LoadedMapLevel {
+  level: typeof DEFAULT_LEVEL;
+  collisionRects: SolidRect[];
+}
+
+interface TiledObject {
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  point?: boolean;
+}
+
+interface TiledLayer {
+  name: string;
+  type: string;
+  data?: number[];
+  properties?: Array<{ name: string; value: unknown }>;
+  objects?: TiledObject[];
+}
+
+interface TiledMap {
+  width: number;
+  height: number;
+  tilewidth: number;
+  tileheight: number;
+  layers: TiledLayer[];
+}
+
 const port = Number(process.env.PORT ?? 3001);
 const clientOrigin = process.env.CLIENT_ORIGIN ?? "http://localhost:5173";
 const tickRate = Number(process.env.TICK_RATE ?? 20);
 const snapshotRate = Number(process.env.SNAPSHOT_RATE ?? 10);
 const disconnectGraceMs = Number(process.env.DISCONNECT_GRACE_MS ?? 10000);
 const inactivityKickMs = Number(process.env.INACTIVITY_KICK_MS ?? 0);
-const countdownMs = 3000;
+function resolveDefaultMapPath(): string {
+  if (process.env.MAP_JSON_PATH) return process.env.MAP_JSON_PATH;
+  const candidates = [
+    path.resolve(process.cwd(), "apps/client/public/maps/reference-map/map.json"),
+    path.resolve(process.cwd(), "../client/public/maps/reference-map/map.json"),
+    path.resolve(process.cwd(), "../../apps/client/public/maps/reference-map/map.json")
+  ];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  return found ?? candidates[0];
+}
+
+const defaultMapPath = resolveDefaultMapPath();
 
 const playerSchema = z.object({ playerName: z.string().min(1).max(24) });
 
@@ -67,25 +114,136 @@ function nextRoomCode(): string {
   return code;
 }
 
+function layerColliderEnabled(layer: TiledLayer): boolean {
+  const coll = layer.properties?.find((p) => p.name === "collider")?.value;
+  return Boolean(coll);
+}
+
+function loadLevelFromTiledJson(filePath: string): LoadedMapLevel | null {
+  try {
+    const raw = readFileSync(filePath, "utf8");
+    const tiled = JSON.parse(raw) as TiledMap;
+    if (!tiled.width || !tiled.height || !tiled.tilewidth || !tiled.tileheight) return null;
+
+    const cols = tiled.width;
+    const rows = tiled.height;
+    const tileW = tiled.tilewidth;
+    const tileH = tiled.tileheight;
+    const blocked = new Uint8Array(cols * rows);
+
+    for (const layer of tiled.layers) {
+      if (layer.type !== "tilelayer" || !layerColliderEnabled(layer) || !layer.data) continue;
+      for (let i = 0; i < Math.min(layer.data.length, blocked.length); i += 1) {
+        if (layer.data[i] > 0) blocked[i] = 1;
+      }
+    }
+
+    const collisionRects: SolidRect[] = [];
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const idx = row * cols + col;
+        if (!blocked[idx]) continue;
+        collisionRects.push({
+          position: { x: col * tileW, y: row * tileH },
+          size: { x: tileW, y: tileH }
+        });
+      }
+    }
+
+    const findLayerByPriority = (type: string, names: string[]) => {
+      for (const name of names) {
+        const layer = tiled.layers.find((l) => l.type === type && l.name.toLowerCase() === name);
+        if (layer) return layer;
+      }
+      return undefined;
+    };
+    const spawnNames = ["spawn_point", "spawn", "start"];
+    const goalNames = ["goal_point", "goal"];
+
+    const spawnLayer = findLayerByPriority("objectgroup", spawnNames);
+    const goalLayer = findLayerByPriority("objectgroup", goalNames);
+    const spawnObj = spawnLayer?.objects?.[0];
+    const goalObj = goalLayer?.objects?.[0];
+    const startTileLayer = findLayerByPriority("tilelayer", spawnNames);
+    const goalTileLayer = findLayerByPriority("tilelayer", goalNames);
+    const firstFilledTile = (layer?: TiledLayer) => {
+      const data = layer?.data;
+      if (!data) return null;
+      for (let i = 0; i < data.length; i += 1) {
+        if (data[i] <= 0) continue;
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        return { x: col * tileW, y: row * tileH };
+      }
+      return null;
+    };
+    const spawnTile = firstFilledTile(startTileLayer);
+    const goalTile = firstFilledTile(goalTileLayer);
+
+    const spawnX = spawnObj ? spawnObj.x + (spawnObj.width ?? 0) / 2 : (spawnTile ? spawnTile.x + tileW / 2 : tileW * 2);
+    const spawnY = spawnObj
+      ? spawnObj.y + (spawnObj.height ?? 0) / 2
+      : spawnTile
+        ? spawnTile.y + tileH - DEFAULT_LEVEL.playerRadius - 4
+        : tileH * 2;
+    const goalW = goalObj?.width ?? tileW;
+    const goalH = goalObj?.height ?? tileH;
+    const goalX = goalObj ? goalObj.x : (goalTile ? goalTile.x : (cols - 3) * tileW);
+    const goalY = goalObj ? goalObj.y : (goalTile ? goalTile.y : tileH);
+
+    const level = {
+      id: "reference-map",
+      width: cols * tileW,
+      height: rows * tileH,
+      spawn: { x: spawnX, y: spawnY },
+      playerRadius: DEFAULT_LEVEL.playerRadius,
+      moveSpeed: DEFAULT_LEVEL.moveSpeed,
+      obstacles: [
+        {
+          id: "goal",
+          kind: "goal" as const,
+          position: { x: goalX, y: goalY },
+          size: { x: goalW, y: goalH }
+        }
+      ]
+    };
+
+    return { level, collisionRects };
+  } catch {
+    return null;
+  }
+}
+
 class WasdRoom extends Room {
   private roomCode = "";
   private hostId = "";
+  private debugSolo = false;
   private roomState: RoomState = "lobby";
-  private countdownEndsAt?: number;
   private tick = 0;
   private players = new Map<string, RoomPlayer>();
   private sessionToPlayerId = new Map<string, string>();
   private inputState: InputState = emptyInputState();
   private teamPosition = { ...DEFAULT_LEVEL.spawn };
   private level = structuredClone(DEFAULT_LEVEL);
+  private collisionRects: SolidRect[] = [];
   private roundResult?: RoundResult;
   private readonly snapshotIntervalMs = Math.max(1000 / Math.max(1, snapshotRate), 33);
   private lastSnapshotAt = 0;
 
-  onCreate() {
+  onCreate(options?: { debugSolo?: boolean }) {
     this.maxClients = 4;
+    this.debugSolo = Boolean(options?.debugSolo);
     this.roomCode = nextRoomCode();
-    this.setMetadata({ roomCode: this.roomCode });
+    this.setMetadata({ roomCode: this.roomCode, debugSolo: this.debugSolo });
+
+    const loaded = loadLevelFromTiledJson(defaultMapPath);
+    if (loaded) {
+      this.level = loaded.level;
+      this.collisionRects = loaded.collisionRects;
+      this.teamPosition = { ...loaded.level.spawn };
+    } else {
+      this.collisionRects = [];
+    }
 
     this.onMessage("ready_state", (client, payload: { ready: boolean }) => {
       const player = this.playerFromClient(client.sessionId);
@@ -99,11 +257,13 @@ class WasdRoom extends Room {
       if (!player || this.roomState !== "lobby" || this.hostId !== player.playerId) return;
 
       if (!this.roomCanStart()) {
-        client.send("error_event", { message: "Need at least 2 ready players." });
+        client.send("error_event", {
+          message: this.debugSolo ? "Need at least 1 player in debug mode." : "Need at least 2 ready players."
+        });
         return;
       }
 
-      this.startCountdown();
+      this.startRound();
     });
 
     this.onMessage("restart_round", (client) => {
@@ -249,9 +409,7 @@ class WasdRoom extends Room {
   }
 
   private emitRoomState() {
-    const remaining =
-      this.roomState === "countdown" && this.countdownEndsAt ? Math.max(0, this.countdownEndsAt - now()) : 0;
-    this.broadcast("room_state", { state: this.roomState, countdownRemainingMs: remaining });
+    this.broadcast("room_state", { state: this.roomState, countdownRemainingMs: 0 });
   }
 
   private emitSnapshot(force = false) {
@@ -268,8 +426,7 @@ class WasdRoom extends Room {
       level: this.level,
       players: this.serializePlayers(),
       teamPosition: this.teamPosition,
-      countdownRemainingMs:
-        this.roomState === "countdown" && this.countdownEndsAt ? Math.max(0, this.countdownEndsAt - now()) : 0,
+      countdownRemainingMs: 0,
       serverTime: current
     };
     this.broadcast("state_snapshot", payload);
@@ -301,7 +458,6 @@ class WasdRoom extends Room {
 
   private resetRound() {
     this.roomState = "lobby";
-    this.countdownEndsAt = undefined;
     this.roundResult = undefined;
     this.tick = 0;
     this.inputState = emptyInputState();
@@ -317,6 +473,9 @@ class WasdRoom extends Room {
   }
 
   private roomCanStart(): boolean {
+    if (this.debugSolo) {
+      return this.players.size >= 1;
+    }
     if (this.players.size < 2) return false;
     for (const player of this.players.values()) {
       if (!player.ready) return false;
@@ -324,9 +483,12 @@ class WasdRoom extends Room {
     return true;
   }
 
-  private startCountdown() {
-    this.roomState = "countdown";
-    this.countdownEndsAt = now() + countdownMs;
+  private startRound() {
+    this.roomState = "playing";
+    this.roundResult = undefined;
+    this.tick = 0;
+    this.inputState = emptyInputState();
+    this.teamPosition = { ...this.level.spawn };
     this.emitRoomState();
     this.emitSnapshot(true);
   }
@@ -339,26 +501,40 @@ class WasdRoom extends Room {
 
   private applyMovement(dt: number) {
     const direction = composeDirection(this.inputState);
-    this.teamPosition.x += direction.x * this.level.moveSpeed * dt;
-    this.teamPosition.y += direction.y * this.level.moveSpeed * dt;
-    this.teamPosition.x = Math.max(this.level.playerRadius, Math.min(this.level.width - this.level.playerRadius, this.teamPosition.x));
-    this.teamPosition.y = Math.max(this.level.playerRadius, Math.min(this.level.height - this.level.playerRadius, this.teamPosition.y));
+    const clampX = (x: number) => Math.max(this.level.playerRadius, Math.min(this.level.width - this.level.playerRadius, x));
+    const clampY = (y: number) => Math.max(this.level.playerRadius, Math.min(this.level.height - this.level.playerRadius, y));
+
+    const collidesAt = (x: number, y: number) => {
+      for (const rect of this.collisionRects) {
+        if (circlesIntersectsRect({ x, y }, this.level.playerRadius, rect.position, rect.size)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const respawnAtSpawn = () => {
+      this.teamPosition = { ...this.level.spawn };
+      this.inputState = emptyInputState();
+    };
+
+    const nextX = clampX(this.teamPosition.x + direction.x * this.level.moveSpeed * dt);
+    if (collidesAt(nextX, this.teamPosition.y)) {
+      respawnAtSpawn();
+      return;
+    }
+    this.teamPosition.x = nextX;
+
+    const nextY = clampY(this.teamPosition.y + direction.y * this.level.moveSpeed * dt);
+    if (collidesAt(this.teamPosition.x, nextY)) {
+      respawnAtSpawn();
+      return;
+    }
+    this.teamPosition.y = nextY;
   }
 
   private resolveCollisions(): "win" | "fail" | null {
     for (const obstacle of this.level.obstacles) {
-      if (obstacle.velocity) {
-        obstacle.position.x += obstacle.velocity.x * (1 / tickRate);
-        obstacle.position.y += obstacle.velocity.y * (1 / tickRate);
-
-        if (obstacle.position.x < 100 || obstacle.position.x + obstacle.size.x > this.level.width - 100) {
-          obstacle.velocity.x *= -1;
-        }
-        if (obstacle.position.y < 80 || obstacle.position.y + obstacle.size.y > this.level.height - 80) {
-          obstacle.velocity.y *= -1;
-        }
-      }
-
       const hit = circlesIntersectsRect(this.teamPosition, this.level.playerRadius, obstacle.position, obstacle.size);
       if (!hit) continue;
       if (obstacle.kind === "hazard") return "fail";
@@ -370,13 +546,6 @@ class WasdRoom extends Room {
   private serverTick() {
     const nowAt = now();
     let playerStatusChanged = false;
-
-    if (this.roomState === "countdown" && this.countdownEndsAt && this.countdownEndsAt <= nowAt) {
-      this.roomState = "playing";
-      this.countdownEndsAt = undefined;
-      this.emitRoomState();
-      this.emitSnapshot(true);
-    }
 
     for (const player of this.players.values()) {
       if (!player.connected && player.disconnectedAt && nowAt - player.disconnectedAt > disconnectGraceMs && this.roomState === "playing") {

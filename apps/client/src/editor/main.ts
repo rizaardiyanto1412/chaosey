@@ -17,10 +17,16 @@ interface SourceRect {
   sh: number;
 }
 
+interface TilesetPreset {
+  mode: TileMode;
+  atlas: AtlasConfig;
+}
+
 interface MapDocument {
   version: 2;
   tilesetSrc: string;
   tileMode: TileMode;
+  autoTerrain?: boolean;
   atlas: AtlasConfig;
   paletteRects?: SourceRect[];
   map: {
@@ -49,11 +55,19 @@ const paintBtn = document.getElementById("paintBtn") as HTMLButtonElement;
 const eraseBtn = document.getElementById("eraseBtn") as HTMLButtonElement;
 const newMapBtn = document.getElementById("newMapBtn") as HTMLButtonElement;
 const clearBtn = document.getElementById("clearBtn") as HTMLButtonElement;
+const autoTerrainBtn = document.getElementById("autoTerrainBtn") as HTMLButtonElement;
 const saveLocalBtn = document.getElementById("saveLocalBtn") as HTMLButtonElement;
 const loadLocalBtn = document.getElementById("loadLocalBtn") as HTMLButtonElement;
 const downloadBtn = document.getElementById("downloadBtn") as HTMLButtonElement;
 const importBtn = document.getElementById("importBtn") as HTMLButtonElement;
 const importFileInput = document.getElementById("importFile") as HTMLInputElement;
+const tilesetQuickPick = document.getElementById("tilesetQuickPick") as HTMLDivElement;
+const uploadTilesetBtn = document.getElementById("uploadTilesetBtn") as HTMLButtonElement;
+const reloadTilesetBtn = document.getElementById("reloadTilesetBtn") as HTMLButtonElement;
+const tilesetFileInput = document.getElementById("tilesetFile") as HTMLInputElement;
+const palettePrevBtn = document.getElementById("palettePrevBtn") as HTMLButtonElement;
+const paletteNextBtn = document.getElementById("paletteNextBtn") as HTMLButtonElement;
+const palettePageInfo = document.getElementById("palettePageInfo") as HTMLDivElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
 
 const paletteCanvas = document.getElementById("palette") as HTMLCanvasElement;
@@ -66,13 +80,52 @@ let selectedTileIndex = 0;
 let tool: Tool = "paint";
 let tileMode: TileMode = "auto";
 let drawing = false;
+let palettePage = 0;
+let autoTerrainEnabled = false;
 
 let currentPaletteRects: SourceRect[] = [];
 let autoDetectedRects: SourceRect[] = [];
 let paletteCells: Array<{ x: number; y: number; w: number; h: number; index: number }> = [];
+let autotileMaskToTile: number[] | null = null;
 
 const tilesetImage = new Image();
 tilesetImage.decoding = "async";
+
+const TILESET_PRESETS: Record<string, TilesetPreset> = {
+  "/assets/tilesets/grass-water-autotile-v1.png": {
+    mode: "grid",
+    atlas: {
+      tileW: 256,
+      tileH: 256,
+      spacingX: 0,
+      spacingY: 0,
+      offsetX: 0,
+      offsetY: 0
+    }
+  },
+  "/assets/tilesets/grass-water-tileset-v2.png": {
+    mode: "grid",
+    atlas: {
+      tileW: 128,
+      tileH: 128,
+      spacingX: 0,
+      spacingY: 0,
+      offsetX: 0,
+      offsetY: 0
+    }
+  },
+  "/assets/tilesets/grass-water-tileset-v1.png": {
+    mode: "grid",
+    atlas: {
+      tileW: 170,
+      tileH: 170,
+      spacingX: 0,
+      spacingY: 0,
+      offsetX: 0,
+      offsetY: 0
+    }
+  }
+};
 
 tilesetImage.onload = () => {
   autoDetectedRects = detectSprites(tilesetImage);
@@ -245,6 +298,83 @@ function detectBestGridConfig(image: HTMLImageElement): AtlasConfig | null {
   return best?.cfg ?? null;
 }
 
+function detectLineGridRects(image: HTMLImageElement): SourceRect[] {
+  if (!image.width || !image.height) return [];
+
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(image, 0, 0);
+  const raw = ctx.getImageData(0, 0, image.width, image.height).data;
+  const w = image.width;
+  const h = image.height;
+
+  const colDark = new Array<number>(w).fill(0);
+  const rowDark = new Array<number>(h).fill(0);
+
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const idx = (y * w + x) * 4;
+      const lum = (raw[idx] + raw[idx + 1] + raw[idx + 2]) / 3;
+      if (lum < 50) {
+        colDark[x] += 1;
+        rowDark[y] += 1;
+      }
+    }
+  }
+
+  const colLineCandidates: number[] = [];
+  const rowLineCandidates: number[] = [];
+  for (let x = 0; x < w; x += 1) {
+    if (colDark[x] > h * 0.72) colLineCandidates.push(x);
+  }
+  for (let y = 0; y < h; y += 1) {
+    if (rowDark[y] > w * 0.72) rowLineCandidates.push(y);
+  }
+
+  const group = (arr: number[]) => {
+    if (arr.length === 0) return [] as Array<{ start: number; end: number }>;
+    const out: Array<{ start: number; end: number }> = [];
+    let start = arr[0];
+    let prev = arr[0];
+    for (let i = 1; i < arr.length; i += 1) {
+      const cur = arr[i];
+      if (cur === prev + 1) {
+        prev = cur;
+      } else {
+        out.push({ start, end: prev });
+        start = cur;
+        prev = cur;
+      }
+    }
+    out.push({ start, end: prev });
+    return out;
+  };
+
+  const colGroups = group(colLineCandidates);
+  const rowGroups = group(rowLineCandidates);
+  if (colGroups.length < 3 || rowGroups.length < 3) return [];
+
+  const rects: SourceRect[] = [];
+  for (let yi = 0; yi < rowGroups.length - 1; yi += 1) {
+    const sy = rowGroups[yi].end + 1;
+    const ey = rowGroups[yi + 1].start - 1;
+    const sh = ey - sy + 1;
+    if (sh < 16) continue;
+
+    for (let xi = 0; xi < colGroups.length - 1; xi += 1) {
+      const sx = colGroups[xi].end + 1;
+      const ex = colGroups[xi + 1].start - 1;
+      const sw = ex - sx + 1;
+      if (sw < 16) continue;
+      rects.push({ sx, sy, sw, sh });
+    }
+  }
+
+  return rects;
+}
+
 function buildGridRects(config = atlasConfig()): SourceRect[] {
   if (!tilesetImage.width || !tilesetImage.height) return [];
 
@@ -270,6 +400,85 @@ function setStatus(message: string) {
   statusEl.textContent = message;
 }
 
+function hamming4(a: number, b: number): number {
+  let v = a ^ b;
+  let bits = 0;
+  while (v) {
+    bits += v & 1;
+    v >>= 1;
+  }
+  return bits;
+}
+
+function buildAutotileMaskToTileMap(rects: SourceRect[]): number[] | null {
+  if (rects.length < 16 || !tilesetImage.width || !tilesetImage.height) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = tilesetImage.width;
+  canvas.height = tilesetImage.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(tilesetImage, 0, 0);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const imgW = canvas.width;
+
+  const isGrass = (r: number, g: number, b: number) => g > r + 8 && g > b + 8;
+  const edgeHasGrass = (rect: SourceRect, side: "N" | "E" | "S" | "W") => {
+    const sampleDepth = Math.max(2, Math.floor(Math.min(rect.sw, rect.sh) * 0.06));
+    const inset = Math.max(2, Math.floor(Math.min(rect.sw, rect.sh) * 0.12));
+    let grass = 0;
+    let total = 0;
+
+    for (let dy = 0; dy < rect.sh; dy += 1) {
+      for (let dx = 0; dx < rect.sw; dx += 1) {
+        const onSide =
+          (side === "N" && dy < sampleDepth && dx >= inset && dx < rect.sw - inset) ||
+          (side === "S" && dy >= rect.sh - sampleDepth && dx >= inset && dx < rect.sw - inset) ||
+          (side === "W" && dx < sampleDepth && dy >= inset && dy < rect.sh - inset) ||
+          (side === "E" && dx >= rect.sw - sampleDepth && dy >= inset && dy < rect.sh - inset);
+        if (!onSide) continue;
+        const px = rect.sx + dx;
+        const py = rect.sy + dy;
+        const idx = (py * imgW + px) * 4;
+        if (isGrass(data[idx], data[idx + 1], data[idx + 2])) grass += 1;
+        total += 1;
+      }
+    }
+
+    if (total === 0) return false;
+    return grass / total > 0.45;
+  };
+
+  const descriptors = rects.slice(0, 16).map((rect, idx) => {
+    const n = edgeHasGrass(rect, "N") ? 1 : 0;
+    const e = edgeHasGrass(rect, "E") ? 2 : 0;
+    const s = edgeHasGrass(rect, "S") ? 4 : 0;
+    const w = edgeHasGrass(rect, "W") ? 8 : 0;
+    return { idx, mask: n | e | s | w };
+  });
+
+  const mapping = new Array<number>(16).fill(0);
+  for (let mask = 0; mask < 16; mask += 1) {
+    const exact = descriptors.find((d) => d.mask === mask);
+    if (exact) {
+      mapping[mask] = exact.idx;
+      continue;
+    }
+
+    let bestIdx = descriptors[0]?.idx ?? 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const d of descriptors) {
+      const distance = hamming4(d.mask, mask);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIdx = d.idx;
+      }
+    }
+    mapping[mask] = bestIdx;
+  }
+
+  return mapping;
+}
+
 function ensureMapSize() {
   const { cols, rows } = mapConfig();
   const required = cols * rows;
@@ -282,6 +491,16 @@ function ensureMapSize() {
   mapTiles = next;
 }
 
+function updateAutoTerrainUi() {
+  const hasAutotileMap = Boolean(autotileMaskToTile);
+  if (!hasAutotileMap) {
+    autoTerrainEnabled = false;
+  }
+  autoTerrainBtn.disabled = !hasAutotileMap;
+  autoTerrainBtn.textContent = `Auto Terrain: ${autoTerrainEnabled ? "On" : "Off"}`;
+  autoTerrainBtn.classList.toggle("primary", autoTerrainEnabled);
+}
+
 function setTool(next: Tool) {
   tool = next;
   paintBtn.classList.toggle("primary", next === "paint");
@@ -290,10 +509,76 @@ function setTool(next: Tool) {
 
 function setTileMode(mode: TileMode) {
   tileMode = mode;
-  currentPaletteRects = mode === "auto" ? autoDetectedRects : buildGridRects();
+  if (tileMode === "auto") {
+    currentPaletteRects = autoDetectedRects.length >= 8 ? autoDetectedRects : buildGridRects();
+    if (autoDetectedRects.length < 8) {
+      tileMode = "grid";
+    }
+  } else {
+    currentPaletteRects = buildGridRects();
+  }
   selectedTileIndex = Math.min(selectedTileIndex, Math.max(0, currentPaletteRects.length - 1));
+  palettePage = 0;
   renderPalette();
   renderMap();
+}
+
+function applyPresetIfAny() {
+  const preset = TILESET_PRESETS[tilesetSelect.value];
+  if (!preset) return false;
+
+  tileWInput.value = String(preset.atlas.tileW);
+  tileHInput.value = String(preset.atlas.tileH);
+  spacingXInput.value = String(preset.atlas.spacingX);
+  spacingYInput.value = String(preset.atlas.spacingY);
+  offsetXInput.value = String(preset.atlas.offsetX);
+  offsetYInput.value = String(preset.atlas.offsetY);
+  tileMode = preset.mode;
+  return true;
+}
+
+function renderTilesetQuickPick() {
+  if (!tilesetQuickPick) return;
+  tilesetQuickPick.innerHTML = "";
+  const options = [...tilesetSelect.options];
+  for (const option of options) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = option.textContent?.trim() || option.value;
+    btn.classList.toggle("primary", option.value === tilesetSelect.value);
+    btn.onclick = () => {
+      tilesetSelect.value = option.value;
+      loadTileset();
+      renderTilesetQuickPick();
+    };
+    tilesetQuickPick.append(btn);
+  }
+}
+
+function recomputeAutoTerrainTiles() {
+  if (!autotileMaskToTile) return;
+  const { cols, rows } = mapConfig();
+  const old = [...mapTiles];
+  const isFilled = (col: number, row: number) => {
+    if (col < 0 || row < 0 || col >= cols || row >= rows) return false;
+    return old[row * cols + col] >= 0;
+  };
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const i = row * cols + col;
+      if (!isFilled(col, row)) {
+        mapTiles[i] = -1;
+        continue;
+      }
+      const mask =
+        (isFilled(col, row - 1) ? 1 : 0) |
+        (isFilled(col + 1, row) ? 2 : 0) |
+        (isFilled(col, row + 1) ? 4 : 0) |
+        (isFilled(col - 1, row) ? 8 : 0);
+      mapTiles[i] = autotileMaskToTile[mask];
+    }
+  }
 }
 
 function renderPalette() {
@@ -308,11 +593,18 @@ function renderPalette() {
   const pad = 8;
   const slot = 68;
   const cols = Math.max(1, Math.floor((paletteCanvas.width - pad * 2) / slot));
+  const rows = Math.max(1, Math.floor((paletteCanvas.height - pad * 2) / slot));
+  const tilesPerPage = Math.max(1, cols * rows);
+  const totalPages = Math.max(1, Math.ceil(currentPaletteRects.length / tilesPerPage));
+  palettePage = Math.max(0, Math.min(palettePage, totalPages - 1));
+  const start = palettePage * tilesPerPage;
+  const end = Math.min(currentPaletteRects.length, start + tilesPerPage);
 
-  for (let i = 0; i < currentPaletteRects.length; i += 1) {
+  for (let i = start; i < end; i += 1) {
     const rect = currentPaletteRects[i];
-    const cellX = pad + (i % cols) * slot;
-    const cellY = pad + Math.floor(i / cols) * slot;
+    const local = i - start;
+    const cellX = pad + (local % cols) * slot;
+    const cellY = pad + Math.floor(local / cols) * slot;
     const cellW = slot - 6;
     const cellH = slot - 6;
 
@@ -335,6 +627,9 @@ function renderPalette() {
     paletteCtx.strokeRect(cellX + 0.5, cellY + 0.5, cellW - 1, cellH - 1);
   }
 
+  palettePageInfo.textContent = `Page ${palettePage + 1}/${totalPages}`;
+  palettePrevBtn.disabled = palettePage <= 0;
+  paletteNextBtn.disabled = palettePage >= totalPages - 1;
   setStatus(`${tileMode === "auto" ? "Auto" : "Grid"} palette: ${currentPaletteRects.length} selectable tiles.`);
 }
 
@@ -369,12 +664,20 @@ function renderMap() {
   }
 }
 
+function canvasPointFromEvent(canvas: HTMLCanvasElement, event: PointerEvent | MouseEvent) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY
+  };
+}
+
 function mapCellFromPointer(event: PointerEvent) {
   const { cols, rows, cellSize, zoom } = mapConfig();
   const displaySize = Math.max(2, Math.floor(cellSize * zoom));
-  const rect = mapCanvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
+  const { x, y } = canvasPointFromEvent(mapCanvas, event);
   const col = Math.floor(x / displaySize);
   const row = Math.floor(y / displaySize);
 
@@ -385,6 +688,12 @@ function mapCellFromPointer(event: PointerEvent) {
 function applyAtPointer(event: PointerEvent) {
   const cell = mapCellFromPointer(event);
   if (!cell) return;
+  if (autoTerrainEnabled && autotileMaskToTile) {
+    mapTiles[cell.index] = tool === "paint" ? autotileMaskToTile[15] : -1;
+    recomputeAutoTerrainTiles();
+    renderMap();
+    return;
+  }
   mapTiles[cell.index] = tool === "paint" ? selectedTileIndex : -1;
   renderMap();
 }
@@ -396,6 +705,7 @@ function buildDocument(): MapDocument {
     version: 2,
     tilesetSrc: tilesetSelect.value,
     tileMode,
+    autoTerrain: autoTerrainEnabled,
     atlas: atlasConfig(),
     paletteRects: tileMode === "auto" ? currentPaletteRects : undefined,
     map: {
@@ -420,6 +730,7 @@ function applyDocument(doc: MapDocument | (MapDocument & { version?: 1 })) {
   cellSizeInput.value = String(doc.map.cellSize);
 
   tileMode = doc.tileMode ?? "grid";
+  autoTerrainEnabled = Boolean(doc.autoTerrain);
   mapTiles = [...doc.map.tiles];
   selectedTileIndex = 0;
 
@@ -430,7 +741,11 @@ function applyDocument(doc: MapDocument | (MapDocument & { version?: 1 })) {
       currentPaletteRects = buildGridRects();
     }
     renderPalette();
+    if (autoTerrainEnabled) {
+      recomputeAutoTerrainTiles();
+    }
     renderMap();
+    updateAutoTerrainUi();
   });
 }
 
@@ -479,10 +794,20 @@ function importJson(file: File) {
 }
 
 function loadTileset(onLoaded?: () => void) {
+  const hadPreset = applyPresetIfAny();
+  renderTilesetQuickPick();
   tilesetImage.onload = () => {
     autoDetectedRects = detectSprites(tilesetImage);
+    const lineGridRects = detectLineGridRects(tilesetImage);
     if (!onLoaded) {
-      if (autoDetectedRects.length >= 8) {
+      if (lineGridRects.length >= 16) {
+        currentPaletteRects = lineGridRects;
+        tileMode = "grid";
+        renderPalette();
+        renderMap();
+      } else if (hadPreset) {
+        setTileMode(tileMode);
+      } else if (autoDetectedRects.length >= 8) {
         setTileMode("auto");
       } else {
         const guessed = detectBestGridConfig(tilesetImage);
@@ -499,17 +824,21 @@ function loadTileset(onLoaded?: () => void) {
     } else {
       onLoaded();
     }
+    autotileMaskToTile = buildAutotileMaskToTileMap(currentPaletteRects);
+    if (!autotileMaskToTile) {
+      autoTerrainEnabled = false;
+    }
+    updateAutoTerrainUi();
+    palettePage = 0;
     setStatus(
-      `Tileset loaded: ${tilesetImage.width}x${tilesetImage.height}, auto-detected ${autoDetectedRects.length} sprites, mode=${tileMode}.`
+      `Tileset loaded: ${tilesetImage.width}x${tilesetImage.height}, auto=${autoDetectedRects.length}, line-grid=${lineGridRects.length}, mode=${tileMode}.`
     );
   };
   tilesetImage.src = tilesetSelect.value;
 }
 
 paletteCanvas.addEventListener("click", (event) => {
-  const rect = paletteCanvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
+  const { x, y } = canvasPointFromEvent(paletteCanvas, event);
 
   const hit = paletteCells.find((cell) => x >= cell.x && y >= cell.y && x <= cell.x + cell.w && y <= cell.y + cell.h);
   if (!hit) return;
@@ -547,6 +876,15 @@ clearBtn.onclick = () => {
   renderMap();
   setStatus("Map cleared.");
 };
+autoTerrainBtn.onclick = () => {
+  if (!autotileMaskToTile) return;
+  autoTerrainEnabled = !autoTerrainEnabled;
+  if (autoTerrainEnabled) {
+    recomputeAutoTerrainTiles();
+    renderMap();
+  }
+  updateAutoTerrainUi();
+};
 saveLocalBtn.onclick = () => saveLocal();
 loadLocalBtn.onclick = () => loadLocal();
 downloadBtn.onclick = () => downloadJson();
@@ -557,6 +895,33 @@ importFileInput.onchange = () => {
 };
 
 tilesetSelect.addEventListener("change", () => loadTileset());
+tilesetSelect.addEventListener("input", () => loadTileset());
+uploadTilesetBtn.onclick = () => tilesetFileInput.click();
+reloadTilesetBtn.onclick = () => loadTileset();
+tilesetFileInput.onchange = () => {
+  const file = tilesetFileInput.files?.[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  const existing = [...tilesetSelect.options].find((o) => o.value === url);
+  if (!existing) {
+    const option = document.createElement("option");
+    option.value = url;
+    option.textContent = `custom: ${file.name}`;
+    tilesetSelect.append(option);
+  }
+  tilesetSelect.value = url;
+  loadTileset();
+  renderTilesetQuickPick();
+};
+
+palettePrevBtn.onclick = () => {
+  palettePage = Math.max(0, palettePage - 1);
+  renderPalette();
+};
+paletteNextBtn.onclick = () => {
+  palettePage += 1;
+  renderPalette();
+};
 
 [tileWInput, tileHInput, spacingXInput, spacingYInput, offsetXInput, offsetYInput].forEach((el) =>
   el.addEventListener("change", () => {
@@ -569,24 +934,12 @@ tilesetSelect.addEventListener("change", () => loadTileset());
 [mapColsInput, mapRowsInput, cellSizeInput, zoomInput].forEach((el) =>
   el.addEventListener("change", () => {
     ensureMapSize();
+    if (autoTerrainEnabled) {
+      recomputeAutoTerrainTiles();
+    }
     renderMap();
   })
 );
-
-const autoBtn = document.createElement("button");
-autoBtn.textContent = "Use Auto Palette";
-autoBtn.onclick = () => setTileMode("auto");
-const gridBtn = document.createElement("button");
-gridBtn.textContent = "Use Grid Palette";
-gridBtn.onclick = () => setTileMode("grid");
-
-const panel = document.querySelector(".panel");
-if (panel) {
-  const wrap = document.createElement("div");
-  wrap.className = "toolbar";
-  wrap.append(autoBtn, gridBtn);
-  panel.insertBefore(wrap, panel.querySelector(".status"));
-}
 
 setTool("paint");
 ensureMapSize();

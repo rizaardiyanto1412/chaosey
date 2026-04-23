@@ -11,6 +11,7 @@ const playersEl = document.getElementById("players");
 const latencyEl = document.getElementById("latency");
 const nameEl = document.getElementById("name");
 const roomCodeEl = document.getElementById("roomCode");
+const debugSoloEl = document.getElementById("debugSolo");
 const touchButtons = document.querySelectorAll("[data-role]");
 let currentRoom = null;
 let myRoles = [];
@@ -22,6 +23,9 @@ let meReady = false;
 let latency = 0;
 let targetTeamPosition = { x: 100, y: 100 };
 const obstacleTargets = new Map();
+const referenceMapKey = "reference-map";
+const referenceTilesKey = "reference-tiles";
+const squirrelSheetKey = "squirrel-walk-4dir-7f-v1";
 function send(type, payload) {
     if (!currentRoom)
         return;
@@ -40,29 +44,98 @@ function handleRelease(key) {
     send("input_release", { role });
 }
 class MainScene extends Phaser.Scene {
-    marker;
+    playerSprite;
     hazards = {};
     goal;
     statusText;
+    mapWidth = 1200;
+    mapHeight = 800;
+    lastFacing = "down";
     constructor() {
         super("main");
     }
+    preload() {
+        this.load.tilemapTiledJSON(referenceMapKey, "/maps/reference-map/map.json");
+        this.load.image(referenceTilesKey, "/maps/reference-map/spritesheet.png");
+        this.load.spritesheet(squirrelSheetKey, "/assets/characters/squirrel-walk-4dir-7f-v1.png", {
+            frameWidth: 128,
+            frameHeight: 128
+        });
+    }
     create() {
-        this.add.rectangle(600, 400, 1200, 800, 0x0b1220).setStrokeStyle(2, 0x475569);
-        this.marker = this.add.ellipse(100, 100, 36, 36, 0xf97316);
+        const tilemap = this.make.tilemap({ key: referenceMapKey });
+        if (tilemap) {
+            const tileset = tilemap.addTilesetImage("spritefusion", referenceTilesKey);
+            if (tileset) {
+                let depth = 0;
+                for (const layer of tilemap.layers) {
+                    const created = tilemap.createLayer(layer.name, tileset, 0, 0);
+                    created?.setDepth(depth);
+                    depth += 1;
+                }
+            }
+            this.mapWidth = tilemap.widthInPixels;
+            this.mapHeight = tilemap.heightInPixels;
+        }
+        else {
+            this.add.rectangle(600, 400, 1200, 800, 0x0b1220).setStrokeStyle(2, 0x475569);
+        }
+        const addAnim = (key, start, end) => {
+            if (this.anims.exists(key))
+                return;
+            this.anims.create({
+                key,
+                frames: this.anims.generateFrameNumbers(squirrelSheetKey, { start, end }),
+                frameRate: 8,
+                repeat: -1
+            });
+        };
+        addAnim("squirrel-walk-down", 0, 6);
+        addAnim("squirrel-walk-left", 7, 13);
+        addAnim("squirrel-walk-right", 14, 20);
+        addAnim("squirrel-walk-up", 21, 27);
+        this.playerSprite = this.add.sprite(100, 100, squirrelSheetKey, 0);
+        this.playerSprite.setDepth(200);
+        this.playerSprite.setScale(0.48);
+        this.playerSprite.setOrigin(0.5, 0.82);
         this.statusText = this.add.text(24, 20, "Waiting for room...", {
             fontFamily: "Trebuchet MS",
             fontSize: "20px",
             color: "#f8fafc"
         });
+        this.statusText.setDepth(1000).setScrollFactor(0);
+        this.cameras.main.setBounds(0, 0, this.mapWidth, this.mapHeight);
+        this.cameras.main.startFollow(this.playerSprite, true, 0.1, 0.1);
+        this.cameras.main.setBackgroundColor("#0f172a");
         this.input.keyboard?.on("keydown", (event) => handlePress(event.key));
         this.input.keyboard?.on("keyup", (event) => handleRelease(event.key));
     }
     update(_time, delta) {
-        if (!latestState || !this.marker)
+        if (!latestState || !this.playerSprite)
             return;
         const smoothFactor = Math.min(1, (delta / 1000) * 14);
-        this.marker.setPosition(Phaser.Math.Linear(this.marker.x, targetTeamPosition.x, smoothFactor), Phaser.Math.Linear(this.marker.y, targetTeamPosition.y, smoothFactor));
+        const nextX = Phaser.Math.Linear(this.playerSprite.x, targetTeamPosition.x, smoothFactor);
+        const nextY = Phaser.Math.Linear(this.playerSprite.y, targetTeamPosition.y, smoothFactor);
+        const dx = nextX - this.playerSprite.x;
+        const dy = nextY - this.playerSprite.y;
+        this.playerSprite.setPosition(nextX, nextY);
+        const moving = Math.hypot(dx, dy) > 0.35;
+        if (moving) {
+            let facing;
+            if (Math.abs(dx) > Math.abs(dy)) {
+                facing = dx > 0 ? "right" : "left";
+            }
+            else {
+                facing = dy > 0 ? "down" : "up";
+            }
+            this.lastFacing = facing;
+            this.playerSprite.anims.play(`squirrel-walk-${facing}`, true);
+        }
+        else if (this.playerSprite.anims.isPlaying) {
+            this.playerSprite.anims.stop();
+            const idleFrame = this.lastFacing === "down" ? 0 : this.lastFacing === "left" ? 7 : this.lastFacing === "right" ? 14 : 21;
+            this.playerSprite.setFrame(idleFrame);
+        }
         this.statusText?.setText(latestResult
             ? latestResult.outcome === "win"
                 ? "Round won. Host can restart."
@@ -216,7 +289,7 @@ async function createRoom() {
     try {
         await leaveCurrentRoom();
         myPlayerName = playerName;
-        const room = await colyseus.create("wasd_room", { playerName });
+        const room = await colyseus.create("wasd_room", { playerName, debugSolo: Boolean(debugSoloEl?.checked) });
         currentRoom = room;
         latestResult = null;
         meReady = false;

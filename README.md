@@ -35,7 +35,8 @@ Use `SNAPSHOT_RATE` to tune network update frequency (default `10`).
 
 ## Assets
 - Capybara sprite sheet: `apps/client/public/assets/sprites/capybara-4dir-sheet-v1.png`
-- Tileset: `apps/client/public/assets/tilesets/grass-water-tileset-v1.png`
+- Tileset (recommended): `apps/client/public/assets/tilesets/grass-water-tileset-v2.png`
+- Legacy tileset: `apps/client/public/assets/tilesets/grass-water-tileset-v1.png`
 
 ## Manual Multiplayer QA Matrix
 - 2 players: join, ready, start, finish/fail

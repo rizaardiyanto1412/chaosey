@@ -14,6 +14,7 @@ const playersEl = document.getElementById("players") as HTMLDivElement;
 const latencyEl = document.getElementById("latency") as HTMLDivElement;
 const nameEl = document.getElementById("name") as HTMLInputElement;
 const roomCodeEl = document.getElementById("roomCode") as HTMLInputElement;
+const debugSoloEl = document.getElementById("debugSolo") as HTMLInputElement;
 
 const touchButtons = document.querySelectorAll<HTMLButtonElement>("[data-role]");
 
@@ -30,6 +31,13 @@ const obstacleTargets = new Map<
   string,
   { x: number; y: number; width: number; height: number; kind: "hazard" | "goal" }
 >();
+const referenceMapKey = "reference-map";
+const referenceTilesKey = "reference-tiles";
+const squirrelSheetKey = "squirrel-walk-4dir-7f-v1";
+const squirrelRightSheetKey = "squirrel-walk-right-12f";
+const squirrelLeftSheetKey = "squirrel-walk-left-12f";
+const squirrelUpSheetKey = "squirrel-walk-up-12f";
+const squirrelDownSheetKey = "squirrel-walk-down-12f";
 
 function send(type: string, payload?: unknown) {
   if (!currentRoom) return;
@@ -49,44 +57,186 @@ function handleRelease(key: string) {
 }
 
 class MainScene extends Phaser.Scene {
-  private marker?: Phaser.GameObjects.Ellipse;
+  private playerSprite?: Phaser.GameObjects.Sprite;
   private hazards: Record<string, Phaser.GameObjects.Rectangle> = {};
   private goal?: Phaser.GameObjects.Rectangle;
   private statusText?: Phaser.GameObjects.Text;
+  private mapWidth = 1200;
+  private mapHeight = 800;
+  private lastFacing: "down" | "left" | "right" | "up" = "down";
 
   constructor() {
     super("main");
   }
 
+  private resolveSpawn(tilemap: Phaser.Tilemaps.Tilemap): { x: number; y: number } {
+    const spawnNames = ["spawn_point", "spawn", "start"];
+
+    for (const name of spawnNames) {
+      const objectLayer = tilemap.getObjectLayer(name);
+      const spawnObj = objectLayer?.objects?.[0];
+      if (spawnObj) {
+        return {
+          x: (spawnObj.x ?? 0) + (spawnObj.width ?? 0) / 2,
+          y: (spawnObj.y ?? 0) + (spawnObj.height ?? 0) / 2
+        };
+      }
+    }
+
+    for (const name of spawnNames) {
+      const tileLayerData = tilemap.getLayer(name)?.tilemapLayer?.layer;
+      const data = tileLayerData?.data;
+      if (!data) continue;
+      for (let row = 0; row < data.length; row += 1) {
+        for (let col = 0; col < data[row].length; col += 1) {
+          const tile = data[row][col];
+          if (!tile || tile.index < 0) continue;
+          return {
+            x: col * tilemap.tileWidth + tilemap.tileWidth / 2,
+            y: row * tilemap.tileHeight + tilemap.tileHeight / 2
+          };
+        }
+      }
+    }
+
+    return { x: 100, y: 100 };
+  }
+
+  preload() {
+    this.load.tilemapTiledJSON(referenceMapKey, "/maps/reference-map/map.json");
+    this.load.image(referenceTilesKey, "/maps/reference-map/spritesheet.png");
+    this.load.spritesheet(squirrelSheetKey, "/assets/characters/squirrel-walk-4dir-7f-v1.png", {
+      frameWidth: 128,
+      frameHeight: 128
+    });
+    this.load.spritesheet(squirrelRightSheetKey, "/assets/characters/squirrel-walk-right-12f.png", {
+      frameWidth: 128,
+      frameHeight: 128
+    });
+    this.load.spritesheet(squirrelLeftSheetKey, "/assets/characters/squirrel-walk-left-12f.png", {
+      frameWidth: 128,
+      frameHeight: 128
+    });
+    this.load.spritesheet(squirrelUpSheetKey, "/assets/characters/squirrel-walk-up-12f.png", {
+      frameWidth: 128,
+      frameHeight: 128
+    });
+    this.load.spritesheet(squirrelDownSheetKey, "/assets/characters/squirrel-walk-down-12f.png", {
+      frameWidth: 128,
+      frameHeight: 128
+    });
+  }
+
   create() {
-    this.add.rectangle(600, 400, 1200, 800, 0x0b1220).setStrokeStyle(2, 0x475569);
-    this.marker = this.add.ellipse(100, 100, 36, 36, 0xf97316);
+    const tilemap = this.make.tilemap({ key: referenceMapKey });
+    let initialSpawn = { x: 100, y: 100 };
+    if (tilemap) {
+      const tileset = tilemap.addTilesetImage("spritefusion", referenceTilesKey);
+      if (tileset) {
+        let depth = 0;
+        for (const layer of tilemap.layers) {
+          const created = tilemap.createLayer(layer.name, tileset, 0, 0);
+          created?.setDepth(depth);
+          depth += 1;
+        }
+      }
+      this.mapWidth = tilemap.widthInPixels;
+      this.mapHeight = tilemap.heightInPixels;
+      initialSpawn = this.resolveSpawn(tilemap);
+      targetTeamPosition = { ...initialSpawn };
+    } else {
+      this.add.rectangle(600, 400, 1200, 800, 0x0b1220).setStrokeStyle(2, 0x475569);
+    }
+    if (!this.anims.exists("squirrel-walk-down")) {
+      this.anims.create({
+        key: "squirrel-walk-down",
+        frames: this.anims.generateFrameNumbers(squirrelDownSheetKey, { start: 0, end: 11 }),
+        frameRate: 10,
+        repeat: -1
+      });
+    }
+    if (!this.anims.exists("squirrel-walk-up")) {
+      this.anims.create({
+        key: "squirrel-walk-up",
+        frames: this.anims.generateFrameNumbers(squirrelUpSheetKey, { start: 0, end: 11 }),
+        frameRate: 10,
+        repeat: -1
+      });
+    }
+    if (!this.anims.exists("squirrel-walk-left")) {
+      this.anims.create({
+        key: "squirrel-walk-left",
+        frames: this.anims.generateFrameNumbers(squirrelLeftSheetKey, { start: 0, end: 11 }),
+        frameRate: 10,
+        repeat: -1
+      });
+    }
+    if (!this.anims.exists("squirrel-walk-right")) {
+      this.anims.create({
+        key: "squirrel-walk-right",
+        frames: this.anims.generateFrameNumbers(squirrelRightSheetKey, { start: 0, end: 11 }),
+        frameRate: 10,
+        repeat: -1
+      });
+    }
+
+    this.playerSprite = this.add.sprite(initialSpawn.x, initialSpawn.y, squirrelDownSheetKey, 0);
+    this.playerSprite.setDepth(200);
+    this.playerSprite.setDisplaySize(64, 64);
+    this.playerSprite.setOrigin(0.5, 0.82);
     this.statusText = this.add.text(24, 20, "Waiting for room...", {
       fontFamily: "Trebuchet MS",
       fontSize: "20px",
       color: "#f8fafc"
     });
+    this.statusText.setDepth(1000).setScrollFactor(0);
+
+    this.cameras.main.setBounds(0, 0, this.mapWidth, this.mapHeight);
+    this.cameras.main.startFollow(this.playerSprite, true, 0.1, 0.1);
+    this.cameras.main.setBackgroundColor("#0f172a");
 
     this.input.keyboard?.on("keydown", (event: KeyboardEvent) => handlePress(event.key));
     this.input.keyboard?.on("keyup", (event: KeyboardEvent) => handleRelease(event.key));
   }
 
   update(_time: number, delta: number) {
-    if (!latestState || !this.marker) return;
+    if (!latestState || !this.playerSprite) return;
 
     const smoothFactor = Math.min(1, (delta / 1000) * 14);
-    this.marker.setPosition(
-      Phaser.Math.Linear(this.marker.x, targetTeamPosition.x, smoothFactor),
-      Phaser.Math.Linear(this.marker.y, targetTeamPosition.y, smoothFactor)
-    );
+    const nextX = Phaser.Math.Linear(this.playerSprite.x, targetTeamPosition.x, smoothFactor);
+    const nextY = Phaser.Math.Linear(this.playerSprite.y, targetTeamPosition.y, smoothFactor);
+    const dx = nextX - this.playerSprite.x;
+    const dy = nextY - this.playerSprite.y;
+    this.playerSprite.setPosition(nextX, nextY);
+
+    const moving = Math.hypot(dx, dy) > 0.35;
+    if (moving) {
+      let facing: "down" | "left" | "right" | "up";
+      if (Math.abs(dx) > Math.abs(dy)) {
+        facing = dx > 0 ? "right" : "left";
+      } else {
+        facing = dy > 0 ? "down" : "up";
+      }
+      this.lastFacing = facing;
+      this.playerSprite.anims.play(`squirrel-walk-${facing}`, true);
+    } else if (this.playerSprite.anims.isPlaying) {
+      this.playerSprite.anims.stop();
+      if (this.lastFacing === "right") {
+        this.playerSprite.setTexture(squirrelRightSheetKey, 0);
+      } else if (this.lastFacing === "left") {
+        this.playerSprite.setTexture(squirrelLeftSheetKey, 0);
+      } else if (this.lastFacing === "up") {
+        this.playerSprite.setTexture(squirrelUpSheetKey, 0);
+      } else {
+        this.playerSprite.setTexture(squirrelDownSheetKey, 0);
+      }
+    }
     this.statusText?.setText(
       latestResult
         ? latestResult.outcome === "win"
           ? "Round won. Host can restart."
           : `Round failed: ${latestResult.failReason}`
-        : latestState.roomState === "countdown"
-          ? `Countdown: ${(latestState.countdownRemainingMs / 1000).toFixed(1)}s`
-          : `Room ${latestState.roomCode} • ${latestState.roomState}`
+        : `Room ${latestState.roomCode} • ${latestState.roomState}`
     );
 
     for (const [id, obstacle] of obstacleTargets.entries()) {
@@ -251,7 +401,7 @@ async function createRoom() {
   try {
     await leaveCurrentRoom();
     myPlayerName = playerName;
-    const room = await colyseus.create("wasd_room", { playerName });
+    const room = await colyseus.create("wasd_room", { playerName, debugSolo: Boolean(debugSoloEl?.checked) });
     currentRoom = room;
     latestResult = null;
     meReady = false;
