@@ -67,10 +67,34 @@
       }
 
       .menu-screen {
+        background: #07131a;
+        overflow: hidden;
+      }
+
+      .menu-bg-video {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        z-index: 0;
+        pointer-events: none;
+      }
+
+      .menu-screen::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
         background:
           linear-gradient(90deg, rgba(2, 12, 16, 0.78) 0%, rgba(2, 12, 16, 0.46) 38%, rgba(2, 12, 16, 0.12) 72%),
-          linear-gradient(180deg, rgba(3, 13, 16, 0.08) 0%, rgba(3, 13, 16, 0.55) 100%),
-          url("/assets/ui/main-menu-background.png") center center / cover no-repeat;
+          linear-gradient(180deg, rgba(3, 13, 16, 0.08) 0%, rgba(3, 13, 16, 0.55) 100%);
+      }
+
+      .menu-screen > .menu-layout {
+        position: relative;
+        z-index: 2;
       }
 
       .menu-layout {
@@ -79,6 +103,7 @@
         gap: 18px;
         justify-items: start;
         margin-right: auto;
+        margin-left: 350px;
       }
 
       .brand {
@@ -334,6 +359,20 @@
         letter-spacing: 0.18em;
       }
 
+      .players-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px 18px;
+        border-radius: 18px;
+        background: rgba(158, 207, 85, 0.14);
+        border: 1px solid rgba(158, 207, 85, 0.42);
+        color: #d8f0a8;
+        font-size: 1.65rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+      }
+
       .loading-screen {
         z-index: 8;
         background:
@@ -448,6 +487,93 @@
         color: #efe3bf;
       }
 
+      .role-reveal-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 14;
+        pointer-events: none;
+        background: radial-gradient(circle at center, rgba(4, 14, 20, 0.82), rgba(2, 8, 12, 0.94));
+        animation: role-reveal-fade 2600ms ease forwards;
+      }
+
+      .role-reveal-overlay[hidden] {
+        display: none;
+      }
+
+      .role-reveal-card {
+        display: grid;
+        gap: 18px;
+        justify-items: center;
+        text-align: center;
+        animation: role-reveal-pop 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .role-reveal-eyebrow {
+        font-size: 1rem;
+        letter-spacing: 0.4em;
+        text-transform: uppercase;
+        color: #f7d37d;
+        text-shadow: 0 2px 14px rgba(0, 0, 0, 0.6);
+      }
+
+      .role-reveal-keys {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      .role-reveal-key {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: clamp(120px, 18vw, 180px);
+        height: clamp(120px, 18vw, 180px);
+        border-radius: 28px;
+        background: linear-gradient(180deg, rgba(247, 211, 125, 0.24), rgba(247, 211, 125, 0.08));
+        border: 2px solid rgba(247, 211, 125, 0.6);
+        color: #fff6dd;
+        font-size: clamp(5rem, 10vw, 8rem);
+        font-weight: 900;
+        letter-spacing: 0.02em;
+        text-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+        box-shadow: 0 18px 60px rgba(247, 211, 125, 0.22), inset 0 0 40px rgba(247, 211, 125, 0.12);
+        animation: role-reveal-key 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .role-reveal-key:nth-child(2) { animation-delay: 120ms; }
+      .role-reveal-key:nth-child(3) { animation-delay: 240ms; }
+      .role-reveal-key:nth-child(4) { animation-delay: 360ms; }
+
+      .role-reveal-caption {
+        font-size: 1.05rem;
+        color: #f3ead0;
+        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+      }
+
+      @keyframes role-reveal-fade {
+        0% { opacity: 0; }
+        12% { opacity: 1; }
+        82% { opacity: 1; }
+        100% { opacity: 0; }
+      }
+
+      @keyframes role-reveal-pop {
+        0% { transform: scale(0.6); opacity: 0; }
+        60% { transform: scale(1.06); opacity: 1; }
+        100% { transform: scale(1); opacity: 1; }
+      }
+
+      @keyframes role-reveal-key {
+        0% { transform: translateY(40px) scale(0.4) rotate(-8deg); opacity: 0; }
+        60% { transform: translateY(-6px) scale(1.1) rotate(2deg); opacity: 1; }
+        100% { transform: translateY(0) scale(1) rotate(0); opacity: 1; }
+      }
+
       .hud-panel {
         position: absolute;
         pointer-events: auto;
@@ -468,6 +594,17 @@
         right: 18px;
         display: flex;
         gap: 10px;
+      }
+
+      .hud-timer {
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-size: 2.2rem;
+        font-weight: 800;
+        color: #f7d37d;
+        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+        letter-spacing: 0.04em;
+        min-width: 140px;
+        text-align: center;
       }
 
       .hud-bottom-left {
@@ -559,6 +696,83 @@
         gap: 10px;
       }
 
+      .leaderboard-list {
+        display: grid;
+        gap: 10px;
+        margin: 16px 0;
+        max-height: 320px;
+        overflow-y: auto;
+      }
+
+      .leaderboard-empty {
+        color: #a0c4c8;
+        font-size: 0.95rem;
+        text-align: center;
+        padding: 24px;
+      }
+
+      .leaderboard-entry {
+        display: grid;
+        grid-template-columns: 40px 1fr auto;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(14, 42, 44, 0.6);
+        border: 1px solid rgba(119, 180, 188, 0.25);
+      }
+
+      .leaderboard-rank {
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        background: linear-gradient(180deg, rgba(119, 180, 188, 0.35), rgba(119, 180, 188, 0.15));
+        font-weight: 800;
+        font-size: 0.9rem;
+        color: #d0f0f4;
+      }
+
+      .leaderboard-rank.top-1 {
+        background: linear-gradient(180deg, rgba(255, 215, 0, 0.45), rgba(255, 215, 0, 0.2));
+        color: #ffe55c;
+      }
+
+      .leaderboard-rank.top-2 {
+        background: linear-gradient(180deg, rgba(192, 192, 192, 0.45), rgba(192, 192, 192, 0.2));
+        color: #d4d4d4;
+      }
+
+      .leaderboard-rank.top-3 {
+        background: linear-gradient(180deg, rgba(205, 127, 50, 0.45), rgba(205, 127, 50, 0.2));
+        color: #e8a86a;
+      }
+
+      .leaderboard-info {
+        display: grid;
+        gap: 2px;
+      }
+
+      .leaderboard-time {
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #f7d37d;
+      }
+
+      .leaderboard-meta {
+        font-size: 0.82rem;
+        color: #a0c4c8;
+      }
+
+      .leaderboard-players {
+        font-size: 0.9rem;
+        color: #9ecf55;
+        font-weight: 600;
+      }
+
       @keyframes load-shimmer {
         0%,
         100% {
@@ -625,6 +839,17 @@
       </div>
 
       <section class="screen menu-screen" id="menuScreen">
+        <video
+          class="menu-bg-video"
+          src="/assets/ui/main-menu-background.mp4"
+          poster="/assets/ui/main-menu-background.png"
+          autoplay
+          loop
+          muted
+          playsinline
+          preload="auto"
+          aria-hidden="true"
+        ></video>
         <div class="menu-layout">
           <div class="brand">
             <div class="eyebrow">Fast chaotic co-op</div>
@@ -638,6 +863,7 @@
               <button id="create" class="menu-button" type="button">Create Room</button>
               <button id="join" class="menu-button secondary" type="button">Join Room</button>
               <button id="howToPlay" class="menu-button ghost" type="button">How To Play</button>
+              <button id="leaderboard" class="menu-button ghost" type="button">Leaderboard</button>
             </div>
             <div class="hint">Create a public or private room, or jump into any public lobby that still has free slots.</div>
             <div class="menu-status" id="menuStatus"></div>
@@ -664,6 +890,10 @@
           </div>
         </div>
 
+        <div class="hud-panel hud-top-right">
+          <div class="hud-timer" id="timer">00:00.00</div>
+        </div>
+
         <div class="hud-panel hud-bottom-left">
           <div class="meta-list" id="players">Players: -</div>
           <div class="hint">Keyboard: each player controls only their assigned letter. Touch controls stay available on mobile.</div>
@@ -677,6 +907,14 @@
         </div>
       </section>
 
+      <section class="role-reveal-overlay" id="roleRevealOverlay" hidden>
+        <div class="role-reveal-card">
+          <div class="role-reveal-eyebrow">Your Role</div>
+          <div class="role-reveal-keys" id="roleRevealKeys"></div>
+          <div class="role-reveal-caption" id="roleRevealCaption">Press and hold your key to move the squirrel.</div>
+        </div>
+      </section>
+
       <section class="lobby-overlay" id="lobbyOverlay" hidden>
         <div class="lobby-card modal-card">
           <h2 id="lobbyOverlayTitle">Waiting For Host</h2>
@@ -686,6 +924,18 @@
             <div class="lobby-badge" id="lobbyOverlayRoom">Room: ----</div>
           </div>
           <div class="lobby-footnote" id="lobbyOverlayFootnote">The game starts automatically for you as soon as the host presses start.</div>
+        </div>
+      </section>
+
+      <section class="screen modal-backdrop" id="leaderboardModal" hidden>
+        <div class="modal-card">
+          <h2>Leaderboard</h2>
+          <div id="leaderboardList" class="leaderboard-list">
+            <div class="leaderboard-empty">No records yet. Be the first to win!</div>
+          </div>
+          <div class="modal-actions">
+            <button id="closeLeaderboard" class="menu-button secondary" type="button">Back</button>
+          </div>
         </div>
       </section>
 
@@ -707,35 +957,43 @@
       <section class="screen modal-backdrop" id="createRoomModal" hidden>
         <div class="modal-card">
           <div class="modal-stack">
-            <div>
-              <h2>Create Room</h2>
-              <p>Choose who can discover this room. Public rooms appear in the join list. Private rooms require the code.</p>
+            <div id="createRoomSetup">
+              <div>
+                <h2>Create Room</h2>
+                <p>Choose who can discover this room. Public rooms appear in the join list. Private rooms require the code.</p>
+              </div>
+              <div class="choice-grid">
+                <button id="visibilityPublic" class="choice-card active" type="button">
+                  <strong>Public Room</strong>
+                  <span>Visible in the server browser. Great for quick drop-in co-op.</span>
+                </button>
+                <button id="visibilityPrivate" class="choice-card" type="button">
+                  <strong>Private Room</strong>
+                  <span>Hidden from the browser. Friends join only with the room code.</span>
+                </button>
+              </div>
+              <label class="checkbox-row">
+                <input id="debugSolo" type="checkbox" />
+                Debug mode for solo start
+              </label>
             </div>
-            <div class="choice-grid">
-              <button id="visibilityPublic" class="choice-card active" type="button">
-                <strong>Public Room</strong>
-                <span>Visible in the server browser. Great for quick drop-in co-op.</span>
-              </button>
-              <button id="visibilityPrivate" class="choice-card" type="button">
-                <strong>Private Room</strong>
-                <span>Hidden from the browser. Friends join only with the room code.</span>
-              </button>
-            </div>
-            <label class="checkbox-row">
-              <input id="debugSolo" type="checkbox" />
-              Debug mode for solo start
-            </label>
             <div id="createRoomResult" hidden>
+              <div>
+                <h2>Room Created</h2>
+              </div>
               <div class="field">
                 <label>Room code</label>
                 <div class="room-code-badge" id="createdRoomCode">----</div>
               </div>
-              <div class="hint" id="createdRoomMeta">Visibility: Public</div>
-              <div class="hint" id="createdRoomPlayers">Players in room: 1/4</div>
+              <div class="hint" id="createdRoomMeta" hidden>Visibility: Public</div>
+              <div class="field">
+                <label>Players in room</label>
+                <div class="players-badge" id="createdRoomPlayers">1/4</div>
+              </div>
             </div>
             <div class="menu-status" id="createRoomStatus"></div>
             <div class="modal-actions">
-              <button id="closeCreateRoom" class="menu-button ghost" type="button">Close</button>
+              <button id="closeCreateRoom" class="menu-button ghost" type="button">Back</button>
               <button id="confirmCreateRoom" class="menu-button" type="button">Create Room</button>
             </div>
           </div>

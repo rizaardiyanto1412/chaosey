@@ -42,10 +42,17 @@ const createdRoomCodeEl = document.getElementById("createdRoomCode") as HTMLDivE
 const createdRoomMetaEl = document.getElementById("createdRoomMeta") as HTMLDivElement;
 const createdRoomPlayersEl = document.getElementById("createdRoomPlayers") as HTMLDivElement;
 const createRoomResultEl = document.getElementById("createRoomResult") as HTMLDivElement;
+const createRoomSetupEl = document.getElementById("createRoomSetup") as HTMLDivElement;
 const confirmCreateRoomEl = document.getElementById("confirmCreateRoom") as HTMLButtonElement;
 const visibilityPublicEl = document.getElementById("visibilityPublic") as HTMLButtonElement;
 const visibilityPrivateEl = document.getElementById("visibilityPrivate") as HTMLButtonElement;
 const quitGameEl = document.getElementById("quitGame") as HTMLButtonElement;
+const roleRevealOverlayEl = document.getElementById("roleRevealOverlay") as HTMLElement;
+const roleRevealKeysEl = document.getElementById("roleRevealKeys") as HTMLDivElement;
+const roleRevealCaptionEl = document.getElementById("roleRevealCaption") as HTMLDivElement;
+const timerEl = document.getElementById("timer") as HTMLDivElement;
+const leaderboardModalEl = document.getElementById("leaderboardModal") as HTMLElement;
+const leaderboardListEl = document.getElementById("leaderboardList") as HTMLDivElement;
 
 const touchButtons = document.querySelectorAll<HTMLButtonElement>("[data-role]");
 const persistedRoomKey = "key-chaos.active-room";
@@ -74,6 +81,8 @@ const squirrelRightSheetKey = "squirrel-walk-right-12f";
 const squirrelLeftSheetKey = "squirrel-walk-left-12f";
 const squirrelUpSheetKey = "squirrel-walk-up-12f";
 const squirrelDownSheetKey = "squirrel-walk-down-12f";
+const explosionSheetKey = "explosion-spritesheet";
+const explosionDieAnimKey = "explosion-die";
 
 let game: Phaser.Game | null = null;
 let gameBootPromise: Promise<void> | null = null;
@@ -81,6 +90,22 @@ let gameBootResolve: (() => void) | null = null;
 let hasEnteredGame = false;
 let isTransitioningRoom = false;
 let hostStartPending = false;
+let previousRoomState: GameState["roomState"] | null = null;
+let roleRevealTimeout: ReturnType<typeof setTimeout> | null = null;
+let clientRoundStartAt = 0;
+let finalCompletionMs: number | null = null;
+let pendingDieAnimation:
+  | {
+      position: { x: number; y: number };
+      keepPlayerHidden: boolean;
+    }
+  | null = null;
+let audioContext: AudioContext | null = null;
+
+type WebKitAudioWindow = Window &
+  typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext;
+  };
 
 type PersistedRoomSession = {
   roomId: string;
@@ -96,6 +121,7 @@ function closeAllModals() {
   setVisibility(howToModalEl, false);
   setVisibility(createRoomModalEl, false);
   setVisibility(joinRoomModalEl, false);
+  setVisibility(leaderboardModalEl, false);
 }
 
 function openModal(modal: HTMLElement) {
@@ -109,6 +135,15 @@ function showMenu(status = "") {
   setVisibility(loadingScreenEl, false);
   setVisibility(hudEl, false);
   setVisibility(lobbyOverlayEl, false);
+  setVisibility(roleRevealOverlayEl, false);
+  if (roleRevealTimeout) {
+    clearTimeout(roleRevealTimeout);
+    roleRevealTimeout = null;
+  }
+  previousRoomState = null;
+  clientRoundStartAt = 0;
+  finalCompletionMs = null;
+  pendingDieAnimation = null;
   menuStatusEl.textContent = status;
 }
 
@@ -175,7 +210,74 @@ function send(type: string, payload?: unknown) {
   currentRoom.send(type, payload);
 }
 
+function getAudioContext(): AudioContext | null {
+  if (audioContext) return audioContext;
+  const AudioContextCtor = window.AudioContext ?? (window as WebKitAudioWindow).webkitAudioContext;
+  if (!AudioContextCtor) return null;
+  audioContext = new AudioContextCtor();
+  return audioContext;
+}
+
+function unlockAudio() {
+  const ctx = getAudioContext();
+  if (!ctx || ctx.state !== "suspended") return;
+  void ctx.resume();
+}
+
+function playBoomSound() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  if (ctx.state === "suspended") {
+    void ctx.resume();
+  }
+
+  const startedAt = ctx.currentTime;
+  const duration = 0.48;
+
+  const impactGain = ctx.createGain();
+  impactGain.gain.setValueAtTime(0.0001, startedAt);
+  impactGain.gain.exponentialRampToValueAtTime(0.9, startedAt + 0.015);
+  impactGain.gain.exponentialRampToValueAtTime(0.0001, startedAt + duration);
+  impactGain.connect(ctx.destination);
+
+  const thump = ctx.createOscillator();
+  thump.type = "sine";
+  thump.frequency.setValueAtTime(92, startedAt);
+  thump.frequency.exponentialRampToValueAtTime(34, startedAt + duration);
+  thump.connect(impactGain);
+  thump.start(startedAt);
+  thump.stop(startedAt + duration);
+
+  const sampleCount = Math.floor(ctx.sampleRate * duration);
+  const noiseBuffer = ctx.createBuffer(1, sampleCount, ctx.sampleRate);
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < sampleCount; i += 1) {
+    const fade = 1 - i / sampleCount;
+    noiseData[i] = (Math.random() * 2 - 1) * fade * fade;
+  }
+
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = "lowpass";
+  noiseFilter.frequency.setValueAtTime(1700, startedAt);
+  noiseFilter.frequency.exponentialRampToValueAtTime(160, startedAt + duration);
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.0001, startedAt);
+  noiseGain.gain.exponentialRampToValueAtTime(0.35, startedAt + 0.02);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, startedAt + duration);
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ctx.destination);
+  noise.start(startedAt);
+  noise.stop(startedAt + duration);
+}
+
 function handlePress(key: string) {
+  unlockAudio();
   const role = mapKeyToRole(key);
   if (!role || !myRoles.includes(role)) return;
   send("input_press", { role });
@@ -187,14 +289,41 @@ function handleRelease(key: string) {
   send("input_release", { role });
 }
 
+function formatTime(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const centis = Math.floor((ms % 1000) / 10);
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+  const cc = String(centis).padStart(2, "0");
+  return `${mm}:${ss}.${cc}`;
+}
+
+function updateTimerDisplay() {
+  if (!timerEl) return;
+  if (finalCompletionMs !== null) {
+    timerEl.textContent = formatTime(finalCompletionMs);
+    return;
+  }
+  if (latestState?.roomState === "playing" && clientRoundStartAt > 0) {
+    const elapsed = Date.now() - clientRoundStartAt;
+    timerEl.textContent = formatTime(elapsed);
+  } else if (latestState?.roomState === "lobby") {
+    timerEl.textContent = "00:00.00";
+  }
+}
+
 class MainScene extends Phaser.Scene {
   private playerSprite?: Phaser.GameObjects.Sprite;
+  private dieSprite?: Phaser.GameObjects.Sprite;
   private hazards: Record<string, Phaser.GameObjects.Rectangle> = {};
   private goal?: Phaser.GameObjects.Rectangle;
   private statusText?: Phaser.GameObjects.Text;
   private mapWidth = 1200;
   private mapHeight = 800;
   private lastFacing: "down" | "left" | "right" | "up" = "down";
+  private keepPlayerHiddenAfterDie = false;
 
   constructor() {
     super("main");
@@ -252,6 +381,10 @@ class MainScene extends Phaser.Scene {
       frameWidth: 128,
       frameHeight: 128
     });
+    this.load.spritesheet(explosionSheetKey, "/assets/sprites/explosion-spritesheet.png", {
+      frameWidth: 415,
+      frameHeight: 417
+    });
   }
 
   create() {
@@ -307,11 +440,28 @@ class MainScene extends Phaser.Scene {
         repeat: -1
       });
     }
+    if (!this.anims.exists(explosionDieAnimKey)) {
+      this.anims.create({
+        key: explosionDieAnimKey,
+        frames: this.anims.generateFrameNumbers(explosionSheetKey, { start: 1, end: 7 }),
+        frameRate: 14,
+        repeat: 0
+      });
+    }
 
     this.playerSprite = this.add.sprite(initialSpawn.x, initialSpawn.y, squirrelDownSheetKey, 0);
     this.playerSprite.setDepth(200);
-    this.playerSprite.setDisplaySize(64, 64);
+    this.playerSprite.setDisplaySize(128, 128);
     this.playerSprite.setOrigin(0.5, 0.82);
+    this.dieSprite = this.add.sprite(initialSpawn.x, initialSpawn.y, explosionSheetKey, 1);
+    this.dieSprite.setDepth(320);
+    this.dieSprite.setDisplaySize(220, 220);
+    this.dieSprite.setOrigin(0.5, 0.5);
+    this.dieSprite.setVisible(false);
+    this.dieSprite.on(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+      this.dieSprite?.setVisible(false);
+      this.playerSprite?.setVisible(!this.keepPlayerHiddenAfterDie);
+    });
     this.statusText = this.add.text(24, 20, "Waiting for room...", {
       fontFamily: "Trebuchet MS",
       fontSize: "20px",
@@ -329,8 +479,30 @@ class MainScene extends Phaser.Scene {
     signalGameBooted();
   }
 
+  private playDieAnimation(position: { x: number; y: number }, keepPlayerHidden: boolean) {
+    if (!this.dieSprite || !this.playerSprite) return;
+    this.keepPlayerHiddenAfterDie = keepPlayerHidden;
+    this.dieSprite.setPosition(position.x, position.y);
+    this.dieSprite.setVisible(true);
+    this.dieSprite.anims.play(explosionDieAnimKey, true);
+    this.playerSprite.setVisible(false);
+    this.cameras.main.shake(220, 0.012);
+    this.cameras.main.flash(90, 255, 244, 214);
+    playBoomSound();
+  }
+
   update(_time: number, delta: number) {
     if (!latestState || !this.playerSprite) return;
+
+    if (latestState.roomState === "playing" && !this.dieSprite?.visible) {
+      this.keepPlayerHiddenAfterDie = false;
+      this.playerSprite.setVisible(true);
+    }
+
+    if (pendingDieAnimation) {
+      this.playDieAnimation(pendingDieAnimation.position, pendingDieAnimation.keepPlayerHidden);
+      pendingDieAnimation = null;
+    }
 
     const smoothFactor = Math.min(1, (delta / 1000) * 14);
     const nextX = Phaser.Math.Linear(this.playerSprite.x, targetTeamPosition.x, smoothFactor);
@@ -339,7 +511,7 @@ class MainScene extends Phaser.Scene {
     const dy = nextY - this.playerSprite.y;
     this.playerSprite.setPosition(nextX, nextY);
 
-    const moving = Math.hypot(dx, dy) > 0.35;
+    const moving = Math.hypot(dx, dy) > 0.15;
     if (moving) {
       let facing: "down" | "left" | "right" | "up";
       if (Math.abs(dx) > Math.abs(dy)) {
@@ -347,17 +519,12 @@ class MainScene extends Phaser.Scene {
       } else {
         facing = dy > 0 ? "down" : "up";
       }
+      const animKey = `squirrel-walk-${facing}`;
+      const current = this.playerSprite.anims.currentAnim;
+      if (!this.playerSprite.anims.isPlaying || !current || current.key !== animKey) {
+        this.playerSprite.anims.play(animKey, true);
+      }
       this.lastFacing = facing;
-      this.playerSprite.setTexture(
-        facing === "right"
-          ? squirrelRightSheetKey
-          : facing === "left"
-            ? squirrelLeftSheetKey
-            : facing === "up"
-              ? squirrelUpSheetKey
-              : squirrelDownSheetKey
-      );
-      this.playerSprite.anims.play(`squirrel-walk-${facing}`, true);
     } else if (this.playerSprite.anims.isPlaying) {
       this.playerSprite.anims.stop();
       if (this.lastFacing === "right") {
@@ -374,12 +541,14 @@ class MainScene extends Phaser.Scene {
     this.statusText?.setText(
       latestResult
         ? latestResult.outcome === "win"
-          ? "Round won. Host can restart."
+          ? `Round won! Time: ${formatTime(latestResult.completionMs ?? 0)}. Host can restart.`
           : `Round failed: ${latestResult.failReason}`
         : latestState.roomState === "countdown"
           ? `Countdown: ${(latestState.countdownRemainingMs / 1000).toFixed(1)}s`
           : `Room ${latestState.roomCode} • ${latestState.roomState}`
     );
+
+    updateTimerDisplay();
 
     for (const [id, obstacle] of obstacleTargets.entries()) {
       if (obstacle.kind === "goal") {
@@ -436,11 +605,13 @@ function resizeGame() {
 }
 
 function updateCreateRoomSummary() {
-  setVisibility(createRoomResultEl, Boolean(roomCode));
+  const hasRoom = Boolean(roomCode);
+  setVisibility(createRoomResultEl, hasRoom);
+  setVisibility(createRoomSetupEl, !hasRoom);
   createdRoomCodeEl.textContent = roomCode || "----";
   createdRoomMetaEl.textContent = `Visibility: ${currentVisibility === "public" ? "Public" : "Private"}`;
   const playerCount = latestState?.players.length ?? (currentRoom ? 1 : 0);
-  createdRoomPlayersEl.textContent = `Players in room: ${playerCount}/4`;
+  createdRoomPlayersEl.textContent = `${playerCount}/4`;
 
   if (!roomCode) {
     confirmCreateRoomEl.textContent = "Create Room";
@@ -461,6 +632,54 @@ function updateStartAvailability() {
   const playerCount = latestState?.players.length ?? 0;
   const canStart = currentDebugSolo ? playerCount >= 1 : playerCount >= 2;
   confirmCreateRoomEl.title = roomCode ? (canStart ? "Start the run" : "Need at least 2 players to start.") : "Create room";
+}
+
+function showRoleReveal(roles: PlayerRole[]) {
+  if (!roleRevealOverlayEl || !roleRevealKeysEl) return;
+
+  roleRevealKeysEl.innerHTML = "";
+  if (roles.length === 0) {
+    const badge = document.createElement("div");
+    badge.className = "role-reveal-key";
+    badge.textContent = "?";
+    roleRevealKeysEl.appendChild(badge);
+    roleRevealCaptionEl.textContent = "No key assigned yet. Hang tight!";
+  } else {
+    for (const role of roles) {
+      const badge = document.createElement("div");
+      badge.className = "role-reveal-key";
+      badge.textContent = role;
+      roleRevealKeysEl.appendChild(badge);
+    }
+    roleRevealCaptionEl.textContent =
+      roles.length > 1
+        ? "You control these keys. Hold them to move the squirrel."
+        : "Hold this key to move the squirrel.";
+  }
+
+  setVisibility(roleRevealOverlayEl, true);
+  // Restart CSS animations by forcing reflow.
+  roleRevealOverlayEl.style.animation = "none";
+  void roleRevealOverlayEl.offsetWidth;
+  roleRevealOverlayEl.style.animation = "";
+
+  if (roleRevealTimeout) {
+    clearTimeout(roleRevealTimeout);
+  }
+  roleRevealTimeout = setTimeout(() => {
+    setVisibility(roleRevealOverlayEl, false);
+    roleRevealTimeout = null;
+    // Start the timer only after the role reveal animation finishes
+    clientRoundStartAt = Date.now();
+  }, 2600);
+}
+
+function maybeTriggerRoleReveal(nextRoomState: GameState["roomState"]) {
+  if (previousRoomState === "lobby" && nextRoomState === "playing") {
+    showRoleReveal(myRoles);
+    finalCompletionMs = null;
+  }
+  previousRoomState = nextRoomState;
 }
 
 function updateLobbyOverlay() {
@@ -568,10 +787,63 @@ async function fetchRoomList() {
   }
 }
 
+type LeaderboardEntryClient = {
+  completionMs: number;
+  playerCount: number;
+  at: string;
+  roomCode: string;
+};
+
+async function fetchLeaderboard() {
+  if (!leaderboardListEl) return;
+  leaderboardListEl.innerHTML = '<div class="leaderboard-empty">Loading...</div>';
+  try {
+    const response = await fetch(`${httpServerUrl}/leaderboard`);
+    if (!response.ok) {
+      throw new Error("Unable to load leaderboard.");
+    }
+    const payload = (await response.json()) as { entries: LeaderboardEntryClient[] };
+    renderLeaderboard(payload.entries);
+  } catch {
+    leaderboardListEl.innerHTML = '<div class="leaderboard-empty">Unable to load leaderboard.</div>';
+  }
+}
+
+function renderLeaderboard(entries: LeaderboardEntryClient[]) {
+  if (!leaderboardListEl) return;
+  if (entries.length === 0) {
+    leaderboardListEl.innerHTML = '<div class="leaderboard-empty">No records yet. Be the first to win!</div>';
+    return;
+  }
+  leaderboardListEl.innerHTML = entries
+    .map((entry, index) => {
+      const rankClass = index === 0 ? "top-1" : index === 1 ? "top-2" : index === 2 ? "top-3" : "";
+      const timeStr = formatTime(entry.completionMs);
+      const dateStr = new Date(entry.at).toLocaleDateString();
+      return `
+        <div class="leaderboard-entry">
+          <div class="leaderboard-rank ${rankClass}">${index + 1}</div>
+          <div class="leaderboard-info">
+            <div class="leaderboard-time">${timeStr}</div>
+            <div class="leaderboard-meta">${dateStr} • Room ${entry.roomCode}</div>
+          </div>
+          <div class="leaderboard-players">${entry.playerCount}P</div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function openLeaderboardModal() {
+  void fetchLeaderboard();
+  openModal(leaderboardModalEl);
+}
+
 function attachTouch() {
   for (const button of touchButtons) {
     const role = button.dataset.role as PlayerRole;
     button.addEventListener("pointerdown", () => {
+      unlockAudio();
       if (!myRoles.includes(role)) return;
       handlePress(role);
     });
@@ -621,12 +893,28 @@ function bindRoom(room: Room) {
   });
 
   room.onMessage("state_snapshot", (state: GameState) => {
+    const previousState = latestState;
     latestState = state;
     if (state.roomState !== "lobby") {
       hostStartPending = false;
     }
     roomCode = state.roomCode;
     hydrateMyRolesFromPlayers(state.players);
+    maybeTriggerRoleReveal(state.roomState);
+    if (previousState?.roomState === "playing" && state.roomState === "playing") {
+      const spawn = state.level.spawn;
+      const distanceFromSpawn = Math.hypot(state.teamPosition.x - spawn.x, state.teamPosition.y - spawn.y);
+      const previousDistanceFromSpawn = Math.hypot(
+        previousState.teamPosition.x - previousState.level.spawn.x,
+        previousState.teamPosition.y - previousState.level.spawn.y
+      );
+      if (distanceFromSpawn <= state.level.playerRadius && previousDistanceFromSpawn > state.level.playerRadius * 2) {
+        pendingDieAnimation = {
+          position: { ...previousState.teamPosition },
+          keepPlayerHidden: false
+        };
+      }
+    }
     targetTeamPosition = { ...state.teamPosition };
     obstacleTargets.clear();
     for (const obstacle of state.level.obstacles) {
@@ -644,6 +932,15 @@ function bindRoom(room: Room) {
 
   room.onMessage("round_result", (result: RoundResult) => {
     latestResult = result;
+    if (result.outcome === "fail" && result.failReason === "trap_hit" && latestState) {
+      pendingDieAnimation = {
+        position: { ...latestState.teamPosition },
+        keepPlayerHidden: true
+      };
+    }
+    if (result.outcome === "win" && result.completionMs) {
+      finalCompletionMs = result.completionMs;
+    }
     updateUi();
   });
 
@@ -667,6 +964,7 @@ function bindRoom(room: Room) {
     myRoomId = "";
     hostStartPending = false;
     obstacleTargets.clear();
+    pendingDieAnimation = null;
     clearPersistedRoom();
     updateUi();
     if (!isTransitioningRoom) {
@@ -692,6 +990,7 @@ async function quitToMenu() {
   roomCode = "";
   myRoomId = "";
   obstacleTargets.clear();
+  pendingDieAnimation = null;
   updateUi();
   showMenu();
   isTransitioningRoom = false;
@@ -811,7 +1110,9 @@ async function resumePersistedRoom() {
 (document.getElementById("join") as HTMLButtonElement).onclick = openJoinRoomModal;
 (document.getElementById("howToPlay") as HTMLButtonElement).onclick = () => openModal(howToModalEl);
 (document.getElementById("closeHowTo") as HTMLButtonElement).onclick = closeAllModals;
-(document.getElementById("closeCreateRoom") as HTMLButtonElement).onclick = closeAllModals;
+(document.getElementById("leaderboard") as HTMLButtonElement).onclick = openLeaderboardModal;
+(document.getElementById("closeLeaderboard") as HTMLButtonElement).onclick = closeAllModals;
+(document.getElementById("closeCreateRoom") as HTMLButtonElement).onclick = () => void quitToMenu();
 (document.getElementById("closeJoinRoom") as HTMLButtonElement).onclick = closeAllModals;
 (document.getElementById("confirmCreateRoom") as HTMLButtonElement).onclick = () => void createRoomFromModal();
 (document.getElementById("refreshRooms") as HTMLButtonElement).onclick = () => void fetchRoomList();

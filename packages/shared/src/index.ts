@@ -62,6 +62,7 @@ export interface RoundResult {
   winCondition?: WinCondition;
   failReason?: FailReason;
   atTick: number;
+  completionMs?: number;
 }
 
 export interface CreateRoomResponse {
@@ -108,7 +109,7 @@ export const DEFAULT_LEVEL: LevelData = {
   height: 1024,
   spawn: { x: 180, y: 300 },
   playerRadius: 18,
-  moveSpeed: 220,
+  moveSpeed: 160,
   obstacles: [
     { id: "goal", kind: "goal", position: { x: 1660, y: 190 }, size: { x: 120, y: 120 } }
   ]

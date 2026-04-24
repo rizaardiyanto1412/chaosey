@@ -111,6 +111,25 @@ function randomCode(): string {
 
 const activeRoomCodes = new Set<string>();
 
+type LeaderboardEntry = {
+  completionMs: number;
+  playerCount: number;
+  at: string; // ISO date
+  roomCode: string;
+};
+
+const leaderboard: LeaderboardEntry[] = [];
+const maxLeaderboardEntries = 10;
+
+function addLeaderboardEntry(entry: LeaderboardEntry) {
+  leaderboard.push(entry);
+  leaderboard.sort((a, b) => a.completionMs - b.completionMs);
+  // Keep only top N
+  if (leaderboard.length > maxLeaderboardEntries) {
+    leaderboard.splice(maxLeaderboardEntries);
+  }
+}
+
 function nextRoomCode(): string {
   let code = randomCode();
   while (activeRoomCodes.has(code)) {
@@ -236,6 +255,7 @@ class WasdRoom extends Room {
   private roundResult?: RoundResult;
   private readonly snapshotIntervalMs = Math.max(1000 / Math.max(1, snapshotRate), 33);
   private lastSnapshotAt = 0;
+  private roundStartAt = 0;
 
   private updateRoomMetadata() {
     const metadata: RoomMetadata = {
@@ -488,12 +508,21 @@ class WasdRoom extends Room {
   }
 
   private markRoundWin() {
+    const completionMs = this.roundStartAt > 0 ? Date.now() - this.roundStartAt : 0;
+    const playerCount = [...this.players.values()].filter((p) => p.connected).length;
     this.roomState = "round_end";
     this.roundResult = {
       outcome: "win",
       winCondition: "goal_reached",
-      atTick: this.tick
+      atTick: this.tick,
+      completionMs
     };
+    addLeaderboardEntry({
+      completionMs,
+      playerCount,
+      at: new Date().toISOString(),
+      roomCode: this.roomCode
+    });
     this.broadcast("round_result", this.roundResult);
     this.emitRoomState();
     this.emitSnapshot(true);
@@ -526,6 +555,7 @@ class WasdRoom extends Room {
     this.roomState = "playing";
     this.roundResult = undefined;
     this.tick = 0;
+    this.roundStartAt = Date.now();
     this.inputState = emptyInputState();
     this.teamPosition = { ...this.level.spawn };
     this.emitRoomState();
@@ -658,6 +688,9 @@ app.get("/rooms", async (_req, res) => {
     })
     .filter((room) => room.visibility === "public" && room.roomCode.length > 0 && room.playerCount < room.maxClients);
   res.json({ rooms: summaries });
+});
+app.get("/leaderboard", (_req, res) => {
+  res.json({ entries: leaderboard });
 });
 app.get("/rooms/:roomCode", async (req, res) => {
   const roomCode = String(req.params.roomCode ?? "").toUpperCase();
