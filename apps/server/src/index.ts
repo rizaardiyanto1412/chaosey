@@ -1,7 +1,7 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { Room, ServerError, matchMaker } from "@colyseus/core";
@@ -107,12 +107,17 @@ function normalizeLevelId(rawLevelId: string): string {
   return DEFAULT_LEVEL_ID;
 }
 
-function resolveDefaultMapPath(): string {
-  if (process.env.MAP_JSON_PATH) return process.env.MAP_JSON_PATH;
+function mapPathCandidates(levelId: string): string[] {
+  return [
+    path.resolve(process.cwd(), `apps/client/public/maps/levels/${levelId}/map.json`),
+    path.resolve(process.cwd(), `../client/public/maps/levels/${levelId}/map.json`),
+    path.resolve(process.cwd(), `../../apps/client/public/maps/levels/${levelId}/map.json`)
+  ];
+}
+
+function resolveMapPath(levelId: string): string {
   const candidates = [
-    path.resolve(process.cwd(), `apps/client/public/maps/levels/${defaultLevelId}/map.json`),
-    path.resolve(process.cwd(), `../client/public/maps/levels/${defaultLevelId}/map.json`),
-    path.resolve(process.cwd(), `../../apps/client/public/maps/levels/${defaultLevelId}/map.json`),
+    ...mapPathCandidates(levelId),
     path.resolve(process.cwd(), "apps/client/public/maps/reference-map/map.json"),
     path.resolve(process.cwd(), "../client/public/maps/reference-map/map.json"),
     path.resolve(process.cwd(), "../../apps/client/public/maps/reference-map/map.json")
@@ -121,7 +126,34 @@ function resolveDefaultMapPath(): string {
   return found ?? candidates[0];
 }
 
-const defaultMapPath = resolveDefaultMapPath();
+function resolveLevelsDirectory(): string | null {
+  const candidates = [
+    path.resolve(process.cwd(), "apps/client/public/maps/levels"),
+    path.resolve(process.cwd(), "../client/public/maps/levels"),
+    path.resolve(process.cwd(), "../../apps/client/public/maps/levels")
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function discoverLevelIds(): string[] {
+  if (process.env.MAP_JSON_PATH) return [defaultLevelId];
+  const levelsDirectory = resolveLevelsDirectory();
+  if (!levelsDirectory) return [defaultLevelId];
+  const levelIds = readdirSync(levelsDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^level-\d{2}$/.test(entry.name) && existsSync(path.join(levelsDirectory, entry.name, "map.json")))
+    .map((entry) => entry.name)
+    .sort();
+  return levelIds.length > 0 ? levelIds : [defaultLevelId];
+}
+
+const levelIds = discoverLevelIds();
+const initialLevelIndex = Math.max(0, levelIds.indexOf(defaultLevelId));
+
+function levelIndexForId(levelId: string): number {
+  const normalized = normalizeLevelId(levelId);
+  const index = levelIds.indexOf(normalized);
+  return index >= 0 ? index : initialLevelIndex;
+}
 
 const roomJoinSchema = z.object({
   playerName: z.string().trim().max(24).optional(),
@@ -279,7 +311,7 @@ function hazardFromComponent(
   };
 }
 
-function loadLevelFromTiledJson(filePath: string): LoadedMapLevel | null {
+function loadLevelFromTiledJson(filePath: string, levelId: string): LoadedMapLevel | null {
   try {
     const raw = readFileSync(filePath, "utf8");
     const tiled = JSON.parse(raw) as TiledMap;
@@ -378,7 +410,7 @@ function loadLevelFromTiledJson(filePath: string): LoadedMapLevel | null {
     );
 
     const level = {
-      id: defaultLevelId,
+      id: levelId,
       width: cols * tileW,
       height: rows * tileH,
       spawn: { x: spawnX, y: spawnY },
@@ -414,6 +446,8 @@ class WasdRoom extends Room {
   private inputState: InputState = emptyInputState();
   private teamPosition = { ...DEFAULT_LEVEL.spawn };
   private level = structuredClone(DEFAULT_LEVEL);
+  private currentLevelIndex = initialLevelIndex;
+  private startLevelIndex = initialLevelIndex;
   private collisionRects: SolidRect[] = [];
   private collectedCollectibleIds = new Set<string>();
   private score = 0;
@@ -447,21 +481,16 @@ class WasdRoom extends Room {
     }, 0);
   }
 
-  onCreate(options?: { debugMoveSpeed?: number; debugSolo?: boolean; visibility?: RoomVisibility }) {
+  onCreate(options?: { debugLevelId?: string; debugMoveSpeed?: number; debugSolo?: boolean; visibility?: RoomVisibility }) {
     this.maxClients = 4;
     this.debugSolo = Boolean(options?.debugSolo);
+    this.startLevelIndex = this.debugSolo && options?.debugLevelId ? levelIndexForId(options.debugLevelId) : initialLevelIndex;
+    this.currentLevelIndex = this.startLevelIndex;
     this.visibility = options?.visibility === "private" ? "private" : "public";
     this.roomCode = nextRoomCode();
     this.updateRoomMetadata();
 
-    const loaded = loadLevelFromTiledJson(defaultMapPath);
-    if (loaded) {
-      this.level = loaded.level;
-      this.collisionRects = loaded.collisionRects;
-      this.teamPosition = { ...loaded.level.spawn };
-    } else {
-      this.collisionRects = [];
-    }
+    this.loadLevelAtIndex(this.currentLevelIndex);
     this.level.moveSpeed = resolveDebugMoveSpeed(this.debugSolo, options?.debugMoveSpeed);
 
     this.onMessage("ready_state", (client, payload: { ready: boolean }) => {
@@ -696,9 +725,35 @@ class WasdRoom extends Room {
     this.emitSnapshot(true);
   }
 
+  private loadLevelAtIndex(levelIndex: number): boolean {
+    const levelId = levelIds[levelIndex];
+    if (!levelId) return false;
+    const loaded = loadLevelFromTiledJson(process.env.MAP_JSON_PATH ?? resolveMapPath(levelId), levelId);
+    if (!loaded) return false;
+    const moveSpeed = this.level.moveSpeed;
+    this.currentLevelIndex = levelIndex;
+    this.level = loaded.level;
+    this.level.moveSpeed = moveSpeed;
+    this.collisionRects = loaded.collisionRects;
+    this.teamPosition = { ...loaded.level.spawn };
+    this.inputState = emptyInputState();
+    this.collectedCollectibleIds.clear();
+    this.score = 0;
+    return true;
+  }
+
+  private advanceLevelOrWin() {
+    if (this.loadLevelAtIndex(this.currentLevelIndex + 1)) {
+      this.emitSnapshot(true);
+      return;
+    }
+    this.markRoundWin();
+  }
+
   private resetRound() {
     this.roomState = "lobby";
     this.roundResult = undefined;
+    this.loadLevelAtIndex(this.startLevelIndex);
     this.tick = 0;
     this.inputState = emptyInputState();
     this.teamPosition = { ...this.level.spawn };
@@ -724,6 +779,7 @@ class WasdRoom extends Room {
   private startRound() {
     this.roomState = "playing";
     this.roundResult = undefined;
+    this.loadLevelAtIndex(this.startLevelIndex);
     this.tick = 0;
     this.roundStartAt = Date.now();
     this.inputState = emptyInputState();
@@ -858,7 +914,7 @@ class WasdRoom extends Room {
 
     this.resolveHazardCollision();
     if (this.resolveGoalCollision()) {
-      this.markRoundWin();
+      this.advanceLevelOrWin();
     }
 
     this.emitSnapshot();

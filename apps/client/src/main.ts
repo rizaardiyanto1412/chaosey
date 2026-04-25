@@ -22,6 +22,7 @@ const playersEl = document.getElementById("players") as HTMLDivElement;
 const latencyEl = document.getElementById("latency") as HTMLDivElement;
 const debugSoloEl = document.getElementById("debugSolo") as HTMLInputElement;
 const debugMoveSpeedEl = document.getElementById("debugMoveSpeed") as HTMLSelectElement;
+const debugLevelIdEl = document.getElementById("debugLevelId") as HTMLSelectElement;
 const privateRoomCodeEl = document.getElementById("privateRoomCode") as HTMLInputElement;
 const menuScreenEl = document.getElementById("menuScreen") as HTMLElement;
 const loadingScreenEl = document.getElementById("loadingScreen") as HTMLElement;
@@ -80,8 +81,8 @@ const obstacleTargets = new Map<
   { x: number; y: number; width: number; height: number; kind: "hazard" | "goal" }
 >();
 
-const referenceMapKey = "reference-map";
-const referenceTilesKey = "reference-tiles";
+const referenceMapKey = (levelId: string) => `reference-map-${levelId}`;
+const referenceTilesKey = (levelId: string) => `reference-tiles-${levelId}`;
 const squirrelRightSheetKey = "squirrel-walk-right-12f";
 const squirrelLeftSheetKey = "squirrel-walk-left-12f";
 const squirrelUpSheetKey = "squirrel-walk-up-12f";
@@ -215,9 +216,12 @@ function setSelectedVisibility(visibility: RoomVisibility) {
 }
 
 function updateDebugSpeedControl() {
-  debugMoveSpeedEl.disabled = !debugSoloEl.checked;
+  const debugEnabled = debugSoloEl.checked;
+  debugMoveSpeedEl.disabled = !debugEnabled;
+  debugLevelIdEl.disabled = !debugEnabled;
   if (!debugSoloEl.checked) {
     debugMoveSpeedEl.value = String(defaultMoveSpeed);
+    debugLevelIdEl.value = DEFAULT_LEVEL_ID;
   }
 }
 
@@ -225,6 +229,10 @@ function selectedDebugMoveSpeed(): number | undefined {
   if (!debugSoloEl.checked) return undefined;
   const speed = Number(debugMoveSpeedEl.value);
   return Number.isFinite(speed) ? speed : defaultMoveSpeed;
+}
+
+function selectedDebugLevelId(): string | undefined {
+  return debugSoloEl.checked ? debugLevelIdEl.value : undefined;
 }
 
 function send(type: string, payload?: unknown) {
@@ -351,6 +359,7 @@ class MainScene extends Phaser.Scene {
   private collectedAcornIds = new Set<string>();
   private goal?: Phaser.GameObjects.Rectangle;
   private statusText?: Phaser.GameObjects.Text;
+  private renderedLevelId = selectedLevelId;
   private mapWidth = 1200;
   private mapHeight = 800;
   private lastFacing: "down" | "left" | "right" | "up" = "down";
@@ -413,8 +422,10 @@ class MainScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.tilemapTiledJSON(referenceMapKey, `/maps/levels/${selectedLevelId}/map.json`);
-    this.load.image(referenceTilesKey, `/maps/levels/${selectedLevelId}/spritesheet.png`);
+    const levelId = latestState?.level.id ?? selectedLevelId;
+    this.renderedLevelId = levelId;
+    this.load.tilemapTiledJSON(referenceMapKey(levelId), `/maps/levels/${levelId}/map.json`);
+    this.load.image(referenceTilesKey(levelId), `/maps/levels/${levelId}/spritesheet.png`);
     this.load.spritesheet(squirrelRightSheetKey, "/assets/characters/squirrel-walk-right-12f.png", {
       frameWidth: 128,
       frameHeight: 128
@@ -443,10 +454,10 @@ class MainScene extends Phaser.Scene {
   }
 
   create() {
-    const tilemap = this.make.tilemap({ key: referenceMapKey });
+    const tilemap = this.make.tilemap({ key: referenceMapKey(this.renderedLevelId) });
     let initialSpawn = { x: 100, y: 100 };
     if (tilemap) {
-      const tileset = tilemap.addTilesetImage("spritefusion", referenceTilesKey);
+      const tileset = tilemap.addTilesetImage("spritefusion", referenceTilesKey(this.renderedLevelId));
       if (tileset) {
         let depth = 0;
         for (const layer of tilemap.layers) {
@@ -557,6 +568,10 @@ class MainScene extends Phaser.Scene {
     playBoomSound();
   }
 
+  isRenderingLevel(levelId: string) {
+    return this.renderedLevelId === levelId;
+  }
+
   update(_time: number, delta: number) {
     if (!latestState || !this.playerSprite) return;
 
@@ -616,6 +631,16 @@ class MainScene extends Phaser.Scene {
 
     updateTimerDisplay();
     this.syncCollectedAcorns();
+
+    for (const id of Object.keys(this.hazards)) {
+      if (obstacleTargets.has(id)) continue;
+      this.hazards[id].destroy();
+      delete this.hazards[id];
+    }
+    if (this.goal && ![...obstacleTargets.values()].some((obstacle) => obstacle.kind === "goal")) {
+      this.goal.destroy();
+      this.goal = undefined;
+    }
 
     for (const [id, obstacle] of obstacleTargets.entries()) {
       if (obstacle.kind === "goal") {
@@ -1035,6 +1060,15 @@ function bindRoom(room: Room) {
   room.onMessage("state_snapshot", (state: GameState) => {
     const previousState = latestState;
     latestState = state;
+    const mainScene = game?.scene.getScene("main") as MainScene | undefined;
+    if ((previousState && previousState.level.id !== state.level.id) || (mainScene && !mainScene.isRenderingLevel(state.level.id))) {
+      latestResult = null;
+      pendingDieAnimation = null;
+      obstacleTargets.clear();
+      targetTeamPosition = { ...state.teamPosition };
+      game?.scene.stop("main");
+      game?.scene.start("main");
+    }
     if (state.roomState !== "lobby") {
       hostStartPending = false;
     }
@@ -1169,6 +1203,7 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
       currentRoom = await colyseus.create("wasd_room", {
         debugSolo: Boolean(debugSoloEl.checked),
         debugMoveSpeed: selectedDebugMoveSpeed(),
+        debugLevelId: selectedDebugLevelId(),
         visibility: currentVisibility
       });
       myRoomId = currentRoom.roomId;

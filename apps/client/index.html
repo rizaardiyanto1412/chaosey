@@ -28,7 +28,8 @@
         color: var(--text);
       }
       button,
-      input {
+      input,
+      select {
         font: inherit;
       }
       button {
@@ -172,7 +173,8 @@
         color: #efe3bf;
       }
 
-      .field input {
+      .field input,
+      .field select {
         width: 100%;
         box-sizing: border-box;
         padding: 14px 16px;
@@ -181,6 +183,10 @@
         background: rgba(249, 245, 230, 0.12);
         color: var(--text);
         outline: none;
+      }
+
+      .field select:disabled {
+        opacity: 0.55;
       }
 
       .field input::placeholder {
@@ -1004,6 +1010,32 @@
                   <option value="160" selected>Default</option>
                   <option value="260">Fast</option>
                   <option value="420">Very fast</option>
+                </select>
+                <div class="hint">Only applies when debug mode is enabled.</div>
+              </div>
+              <div class="field">
+                <label for="debugLevelId">Debug starting level</label>
+                <select id="debugLevelId" disabled>
+                  <option value="level-01" selected>Level 1</option>
+                  <option value="level-02">Level 2</option>
+                  <option value="level-03">Level 3</option>
+                  <option value="level-04">Level 4</option>
+                  <option value="level-05">Level 5</option>
+                  <option value="level-06">Level 6</option>
+                  <option value="level-07">Level 7</option>
+                  <option value="level-08">Level 8</option>
+                  <option value="level-09">Level 9</option>
+                  <option value="level-10">Level 10</option>
+                  <option value="level-11">Level 11</option>
+                  <option value="level-12">Level 12</option>
+                  <option value="level-13">Level 13</option>
+                  <option value="level-14">Level 14</option>
+                  <option value="level-15">Level 15</option>
+                  <option value="level-16">Level 16</option>
+                  <option value="level-17">Level 17</option>
+                  <option value="level-18">Level 18</option>
+                  <option value="level-19">Level 19</option>
+                  <option value="level-20">Level 20</option>
                 </select>
                 <div class="hint">Only applies when debug mode is enabled.</div>
               </div>
