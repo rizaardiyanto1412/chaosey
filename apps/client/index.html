@@ -607,6 +607,28 @@
         text-align: center;
       }
 
+      .hud-score {
+        min-width: 112px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        color: #fff4d5;
+        font-size: 1.45rem;
+        font-weight: 900;
+      }
+
+      .hud-score::before {
+        content: "";
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 38% 34%, #fff2a8 0 16%, transparent 17%),
+          radial-gradient(circle at 50% 50%, #f4b63f 0 58%, #7a3d14 60% 100%);
+        box-shadow: inset 0 0 0 3px rgba(255, 246, 195, 0.35), 0 3px 10px rgba(0, 0, 0, 0.35);
+      }
+
       .hud-bottom-left {
         left: 18px;
         bottom: 18px;
@@ -891,6 +913,7 @@
         </div>
 
         <div class="hud-panel hud-top-right">
+          <div class="hud-score" id="score">0 / 0</div>
           <div class="hud-timer" id="timer">00:00.00</div>
         </div>
 
@@ -975,6 +998,15 @@
                 <input id="debugSolo" type="checkbox" />
                 Debug mode for solo start
               </label>
+              <div class="field">
+                <label for="debugMoveSpeed">Debug movement speed</label>
+                <select id="debugMoveSpeed" disabled>
+                  <option value="160" selected>Default</option>
+                  <option value="260">Fast</option>
+                  <option value="420">Very fast</option>
+                </select>
+                <div class="hint">Only applies when debug mode is enabled.</div>
+              </div>
             </div>
             <div id="createRoomResult" hidden>
               <div>

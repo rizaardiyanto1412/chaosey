@@ -9,6 +9,7 @@ import type {
   RoomVisibility,
   RoundResult
 } from "@wasd/shared";
+import { DEFAULT_LEVEL_ID } from "@wasd/shared";
 
 const serverUrl = import.meta.env.VITE_SERVER_URL ?? "ws://localhost:3001";
 const colyseus = new Client(serverUrl.replace(/^http/, "ws"));
@@ -20,6 +21,7 @@ const stateEl = document.getElementById("state") as HTMLDivElement;
 const playersEl = document.getElementById("players") as HTMLDivElement;
 const latencyEl = document.getElementById("latency") as HTMLDivElement;
 const debugSoloEl = document.getElementById("debugSolo") as HTMLInputElement;
+const debugMoveSpeedEl = document.getElementById("debugMoveSpeed") as HTMLSelectElement;
 const privateRoomCodeEl = document.getElementById("privateRoomCode") as HTMLInputElement;
 const menuScreenEl = document.getElementById("menuScreen") as HTMLElement;
 const loadingScreenEl = document.getElementById("loadingScreen") as HTMLElement;
@@ -51,11 +53,14 @@ const roleRevealOverlayEl = document.getElementById("roleRevealOverlay") as HTML
 const roleRevealKeysEl = document.getElementById("roleRevealKeys") as HTMLDivElement;
 const roleRevealCaptionEl = document.getElementById("roleRevealCaption") as HTMLDivElement;
 const timerEl = document.getElementById("timer") as HTMLDivElement;
+const scoreEl = document.getElementById("score") as HTMLDivElement;
 const leaderboardModalEl = document.getElementById("leaderboardModal") as HTMLElement;
 const leaderboardListEl = document.getElementById("leaderboardList") as HTMLDivElement;
 
 const touchButtons = document.querySelectorAll<HTMLButtonElement>("[data-role]");
 const persistedRoomKey = "key-chaos.active-room";
+const defaultMoveSpeed = 160;
+const selectedLevelId = import.meta.env.VITE_LEVEL_ID ?? DEFAULT_LEVEL_ID;
 
 let currentRoom: Room | null = null;
 let latestState: GameState | null = null;
@@ -83,6 +88,10 @@ const squirrelUpSheetKey = "squirrel-walk-up-12f";
 const squirrelDownSheetKey = "squirrel-walk-down-12f";
 const explosionSheetKey = "explosion-spritesheet";
 const explosionDieAnimKey = "explosion-die";
+const acornSheetKey = "bouncing-acorn-spritesheet";
+const blueSpiritEnemyKey = "blue-spirit-enemy";
+const coinLayerName = "coin";
+const hazardMarkerLayerPattern = /^hazard_(left|right|up|down)(?:_|$)/;
 
 let game: Phaser.Game | null = null;
 let gameBootPromise: Promise<void> | null = null;
@@ -205,6 +214,19 @@ function setSelectedVisibility(visibility: RoomVisibility) {
   visibilityPrivateEl.classList.toggle("active", visibility === "private");
 }
 
+function updateDebugSpeedControl() {
+  debugMoveSpeedEl.disabled = !debugSoloEl.checked;
+  if (!debugSoloEl.checked) {
+    debugMoveSpeedEl.value = String(defaultMoveSpeed);
+  }
+}
+
+function selectedDebugMoveSpeed(): number | undefined {
+  if (!debugSoloEl.checked) return undefined;
+  const speed = Number(debugMoveSpeedEl.value);
+  return Number.isFinite(speed) ? speed : defaultMoveSpeed;
+}
+
 function send(type: string, payload?: unknown) {
   if (!currentRoom) return;
   currentRoom.send(type, payload);
@@ -314,10 +336,19 @@ function updateTimerDisplay() {
   }
 }
 
+function updateScoreDisplay() {
+  if (!scoreEl) return;
+  const collected = latestState?.score ?? 0;
+  const total = latestState?.level.collectibles.length ?? 0;
+  scoreEl.textContent = `${collected} / ${total}`;
+}
+
 class MainScene extends Phaser.Scene {
   private playerSprite?: Phaser.GameObjects.Sprite;
   private dieSprite?: Phaser.GameObjects.Sprite;
-  private hazards: Record<string, Phaser.GameObjects.Rectangle> = {};
+  private hazards: Record<string, Phaser.GameObjects.Sprite> = {};
+  private acorns = new Map<string, Phaser.GameObjects.Sprite>();
+  private collectedAcornIds = new Set<string>();
   private goal?: Phaser.GameObjects.Rectangle;
   private statusText?: Phaser.GameObjects.Text;
   private mapWidth = 1200;
@@ -362,9 +393,28 @@ class MainScene extends Phaser.Scene {
     return { x: 100, y: 100 };
   }
 
+  private tileCentersForLayer(tilemap: Phaser.Tilemaps.Tilemap, layerName: string): Array<{ x: number; y: number }> {
+    const tileLayerData = tilemap.getLayer(layerName);
+    const data = tileLayerData?.data ?? tileLayerData?.tilemapLayer?.layer.data;
+    if (!data) return [];
+
+    const centers: Array<{ x: number; y: number }> = [];
+    for (let row = 0; row < data.length; row += 1) {
+      for (let col = 0; col < data[row].length; col += 1) {
+        const tile = data[row][col];
+        if (!tile || tile.index < 0) continue;
+        centers.push({
+          x: col * tilemap.tileWidth + tilemap.tileWidth / 2,
+          y: row * tilemap.tileHeight + tilemap.tileHeight / 2
+        });
+      }
+    }
+    return centers;
+  }
+
   preload() {
-    this.load.tilemapTiledJSON(referenceMapKey, "/maps/reference-map/map.json");
-    this.load.image(referenceTilesKey, "/maps/reference-map/spritesheet.png");
+    this.load.tilemapTiledJSON(referenceMapKey, `/maps/levels/${selectedLevelId}/map.json`);
+    this.load.image(referenceTilesKey, `/maps/levels/${selectedLevelId}/spritesheet.png`);
     this.load.spritesheet(squirrelRightSheetKey, "/assets/characters/squirrel-walk-right-12f.png", {
       frameWidth: 128,
       frameHeight: 128
@@ -385,6 +435,11 @@ class MainScene extends Phaser.Scene {
       frameWidth: 415,
       frameHeight: 417
     });
+    this.load.spritesheet(acornSheetKey, "/assets/items/bouncing-acorn-spritesheet.png", {
+      frameWidth: 231,
+      frameHeight: 295
+    });
+    this.load.image(blueSpiritEnemyKey, "/assets/enemies/blue-spirit-hd-transparent.png");
   }
 
   create() {
@@ -395,9 +450,21 @@ class MainScene extends Phaser.Scene {
       if (tileset) {
         let depth = 0;
         for (const layer of tilemap.layers) {
+          if (layer.name === coinLayerName || hazardMarkerLayerPattern.test(layer.name.toLowerCase())) {
+            depth += 1;
+            continue;
+          }
           const created = tilemap.createLayer(layer.name, tileset, 0, 0);
           created?.setDepth(depth);
           depth += 1;
+        }
+        for (const [index, position] of this.tileCentersForLayer(tilemap, coinLayerName).entries()) {
+          const id = `acorn-${Math.floor(position.x / tilemap.tileWidth)}-${Math.floor(position.y / tilemap.tileHeight)}`;
+          const acorn = this.add.sprite(position.x, position.y, acornSheetKey, 0);
+          acorn.setDepth(150);
+          acorn.setDisplaySize(56, 72);
+          acorn.setOrigin(0.5, 0.72);
+          this.acorns.set(id || `acorn-${index}`, acorn);
         }
       }
       this.mapWidth = tilemap.widthInPixels;
@@ -448,7 +515,6 @@ class MainScene extends Phaser.Scene {
         repeat: 0
       });
     }
-
     this.playerSprite = this.add.sprite(initialSpawn.x, initialSpawn.y, squirrelDownSheetKey, 0);
     this.playerSprite.setDepth(200);
     this.playerSprite.setDisplaySize(128, 128);
@@ -549,6 +615,7 @@ class MainScene extends Phaser.Scene {
     );
 
     updateTimerDisplay();
+    this.syncCollectedAcorns();
 
     for (const [id, obstacle] of obstacleTargets.entries()) {
       if (obstacle.kind === "goal") {
@@ -565,14 +632,59 @@ class MainScene extends Phaser.Scene {
       }
 
       if (!this.hazards[id]) {
-        this.hazards[id] = this.add.rectangle(obstacle.x, obstacle.y, obstacle.width, obstacle.height, 0xef4444);
+        this.hazards[id] = this.add.sprite(obstacle.x, obstacle.y, blueSpiritEnemyKey);
+        this.hazards[id].setDepth(175);
+        this.hazards[id].setOrigin(0.5);
       }
-      this.hazards[id].width = obstacle.width;
-      this.hazards[id].height = obstacle.height;
+      const visualSize = Math.max(obstacle.width, obstacle.height) * 1.25;
+      this.hazards[id].setDisplaySize(visualSize, visualSize);
       this.hazards[id].setPosition(
         Phaser.Math.Linear(this.hazards[id].x, obstacle.x, smoothFactor),
         Phaser.Math.Linear(this.hazards[id].y, obstacle.y, smoothFactor)
       );
+      this.hazards[id].setAlpha(0.92 + Math.sin(_time * 0.008 + id.length) * 0.08);
+    }
+  }
+
+  private syncCollectedAcorns() {
+    const collectedIds = new Set(latestState?.collectedCollectibleIds ?? []);
+    for (const id of collectedIds) {
+      const acorn = this.acorns.get(id);
+      if (!acorn || this.collectedAcornIds.has(id)) continue;
+      this.collectedAcornIds.add(id);
+      const popup = this.add.text(acorn.x, acorn.y - 46, "+1", {
+        fontFamily: "Trebuchet MS",
+        fontSize: "26px",
+        color: "#fff4b8",
+        stroke: "#5a2f12",
+        strokeThickness: 5
+      });
+      popup.setDepth(260);
+      popup.setOrigin(0.5);
+      this.tweens.add({
+        targets: popup,
+        y: popup.y - 34,
+        alpha: 0,
+        duration: 650,
+        ease: "Cubic.easeOut",
+        onComplete: () => popup.destroy()
+      });
+      this.tweens.add({
+        targets: acorn,
+        scaleX: 0,
+        scaleY: 0,
+        alpha: 0,
+        duration: 180,
+        ease: "Back.easeIn",
+        onComplete: () => acorn.setVisible(false)
+      });
+    }
+    for (const [id, acorn] of this.acorns.entries()) {
+      if (collectedIds.has(id)) continue;
+      acorn.setVisible(true);
+      acorn.setAlpha(1);
+      acorn.setDisplaySize(56, 72);
+      this.collectedAcornIds.delete(id);
     }
   }
 }
@@ -674,6 +786,33 @@ function showRoleReveal(roles: PlayerRole[]) {
   }, 2600);
 }
 
+function showWinReveal(result: RoundResult) {
+  if (!roleRevealOverlayEl || !roleRevealKeysEl) return;
+
+  roleRevealKeysEl.innerHTML = "";
+  const badge = document.createElement("div");
+  badge.className = "role-reveal-key";
+  badge.textContent = "GOAL!";
+  roleRevealKeysEl.appendChild(badge);
+
+  const collected = latestState?.score ?? 0;
+  const total = latestState?.level.collectibles.length ?? 0;
+  roleRevealCaptionEl.textContent = `Finished in ${formatTime(result.completionMs ?? 0)} • Acorns ${collected}/${total}`;
+
+  setVisibility(roleRevealOverlayEl, true);
+  roleRevealOverlayEl.style.animation = "none";
+  void roleRevealOverlayEl.offsetWidth;
+  roleRevealOverlayEl.style.animation = "";
+
+  if (roleRevealTimeout) {
+    clearTimeout(roleRevealTimeout);
+  }
+  roleRevealTimeout = setTimeout(() => {
+    setVisibility(roleRevealOverlayEl, false);
+    roleRevealTimeout = null;
+  }, 3200);
+}
+
 function maybeTriggerRoleReveal(nextRoomState: GameState["roomState"]) {
   if (previousRoomState === "lobby" && nextRoomState === "playing") {
     showRoleReveal(myRoles);
@@ -735,6 +874,7 @@ function updateUi() {
   updateCreateRoomSummary();
   updateLobbyOverlay();
   syncLobbyControls();
+  updateScoreDisplay();
 }
 
 function hydrateMyRolesFromPlayers(players: GameState["players"]) {
@@ -938,8 +1078,9 @@ function bindRoom(room: Room) {
         keepPlayerHidden: true
       };
     }
-    if (result.outcome === "win" && result.completionMs) {
+    if (result.outcome === "win" && result.completionMs !== undefined) {
       finalCompletionMs = result.completionMs;
+      showWinReveal(result);
     }
     updateUi();
   });
@@ -1027,6 +1168,7 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
       currentVisibility = options.visibility ?? "public";
       currentRoom = await colyseus.create("wasd_room", {
         debugSolo: Boolean(debugSoloEl.checked),
+        debugMoveSpeed: selectedDebugMoveSpeed(),
         visibility: currentVisibility
       });
       myRoomId = currentRoom.roomId;
@@ -1121,6 +1263,7 @@ quitGameEl.onclick = () => void quitToMenu();
 
 visibilityPublicEl.onclick = () => setSelectedVisibility("public");
 visibilityPrivateEl.onclick = () => setSelectedVisibility("private");
+debugSoloEl.onchange = updateDebugSpeedControl;
 
 setInterval(() => {
   const sentAt = Date.now();
@@ -1143,6 +1286,7 @@ window.addEventListener("resize", resizeGame);
 
 attachTouch();
 setSelectedVisibility("public");
+updateDebugSpeedControl();
 renderRoomList();
 updateUi();
 void resumePersistedRoom();

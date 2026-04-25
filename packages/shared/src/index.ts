@@ -14,9 +14,22 @@ export interface Vector2 {
 export interface Obstacle {
   id: string;
   kind: "hazard" | "goal";
+  movement?: "horizontal" | "vertical";
+  origin?: Vector2;
+  amplitude?: number;
+  speed?: number;
+  phase?: number;
   position: Vector2;
   size: Vector2;
   velocity?: Vector2;
+}
+
+export interface Collectible {
+  id: string;
+  kind: "acorn";
+  position: Vector2;
+  radius: number;
+  points: number;
 }
 
 export interface LevelData {
@@ -27,7 +40,10 @@ export interface LevelData {
   playerRadius: number;
   moveSpeed: number;
   obstacles: Obstacle[];
+  collectibles: Collectible[];
 }
+
+export const DEFAULT_LEVEL_ID = "level-01";
 
 export interface InputState {
   W: boolean;
@@ -53,6 +69,8 @@ export interface GameState {
   level: LevelData;
   players: PlayerStatus[];
   teamPosition: Vector2;
+  score: number;
+  collectedCollectibleIds: string[];
   countdownRemainingMs: number;
   serverTime: number;
 }
@@ -112,7 +130,8 @@ export const DEFAULT_LEVEL: LevelData = {
   moveSpeed: 160,
   obstacles: [
     { id: "goal", kind: "goal", position: { x: 1660, y: 190 }, size: { x: 120, y: 120 } }
-  ]
+  ],
+  collectibles: []
 };
 
 export function emptyInputState(): InputState {

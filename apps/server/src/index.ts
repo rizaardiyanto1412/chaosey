@@ -10,10 +10,13 @@ import { WebSocketTransport } from "@colyseus/ws-transport";
 import { z } from "zod";
 import {
   DEFAULT_LEVEL,
+  DEFAULT_LEVEL_ID,
   circlesIntersectsRect,
+  type Collectible,
   composeDirection,
   emptyInputState,
   type LobbyRoomSummary,
+  type Obstacle,
   roleBundlesForPlayerCount,
   type FailReason,
   type GameState,
@@ -24,7 +27,8 @@ import {
   type RoomMetadata,
   type RoomState,
   type RoomVisibility,
-  type RoundResult
+  type RoundResult,
+  type Vector2
 } from "@wasd/shared";
 
 interface RoomPlayer {
@@ -72,15 +76,43 @@ interface TiledMap {
   layers: TiledLayer[];
 }
 
+type HazardDirection = "left" | "right" | "up" | "down";
+
+interface TileComponent {
+  minCol: number;
+  maxCol: number;
+  minRow: number;
+  maxRow: number;
+}
+
 const port = Number(process.env.PORT ?? 3001);
 const clientOrigin = process.env.CLIENT_ORIGIN ?? "http://localhost:5173";
 const tickRate = Number(process.env.TICK_RATE ?? 20);
 const snapshotRate = Number(process.env.SNAPSHOT_RATE ?? 10);
 const disconnectGraceMs = Number(process.env.DISCONNECT_GRACE_MS ?? 10000);
 const inactivityKickMs = Number(process.env.INACTIVITY_KICK_MS ?? 0);
+const allowedDebugMoveSpeeds = new Set([DEFAULT_LEVEL.moveSpeed, 260, 420]);
+const defaultLevelId = normalizeLevelId(process.env.LEVEL_ID ?? DEFAULT_LEVEL_ID);
+
+function normalizeLevelId(rawLevelId: string): string {
+  const trimmed = rawLevelId.trim().toLowerCase();
+  const numeric = trimmed.match(/^(?:level-?)?(\d{1,2})$/)?.[1];
+  if (numeric) {
+    const levelNumber = Number(numeric);
+    if (levelNumber >= 1 && levelNumber <= 20) {
+      return `level-${String(levelNumber).padStart(2, "0")}`;
+    }
+  }
+  if (/^level-\d{2}$/.test(trimmed)) return trimmed;
+  return DEFAULT_LEVEL_ID;
+}
+
 function resolveDefaultMapPath(): string {
   if (process.env.MAP_JSON_PATH) return process.env.MAP_JSON_PATH;
   const candidates = [
+    path.resolve(process.cwd(), `apps/client/public/maps/levels/${defaultLevelId}/map.json`),
+    path.resolve(process.cwd(), `../client/public/maps/levels/${defaultLevelId}/map.json`),
+    path.resolve(process.cwd(), `../../apps/client/public/maps/levels/${defaultLevelId}/map.json`),
     path.resolve(process.cwd(), "apps/client/public/maps/reference-map/map.json"),
     path.resolve(process.cwd(), "../client/public/maps/reference-map/map.json"),
     path.resolve(process.cwd(), "../../apps/client/public/maps/reference-map/map.json")
@@ -144,6 +176,109 @@ function layerColliderEnabled(layer: TiledLayer): boolean {
   return Boolean(coll);
 }
 
+function resolveDebugMoveSpeed(debugSolo: boolean, requestedSpeed: unknown): number {
+  if (!debugSolo || typeof requestedSpeed !== "number" || !Number.isFinite(requestedSpeed)) {
+    return DEFAULT_LEVEL.moveSpeed;
+  }
+  return allowedDebugMoveSpeeds.has(requestedSpeed) ? requestedSpeed : DEFAULT_LEVEL.moveSpeed;
+}
+
+function propertyNumber(layer: TiledLayer | undefined, name: string, fallback: number): number {
+  const value = layer?.properties?.find((p) => p.name === name)?.value;
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function numberFromLayerName(layer: TiledLayer | undefined, name: string): number | undefined {
+  const match = layer?.name.toLowerCase().match(new RegExp(`(?:^|_)${name}_(-?\\d+(?:\\.\\d+)?)(?:_|$)`));
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function hazardDirectionFromLayerName(layer: TiledLayer): HazardDirection | null {
+  const match = layer.name.toLowerCase().match(/^hazard_(left|right|up|down)(?:_|$)/);
+  return match ? (match[1] as HazardDirection) : null;
+}
+
+function filledTileComponents(layer: TiledLayer | undefined, cols: number): TileComponent[] {
+  const data = layer?.data;
+  if (!data) return [];
+
+  const filled = new Set<number>();
+  for (let i = 0; i < data.length; i += 1) {
+    if (data[i] > 0) filled.add(i);
+  }
+
+  const components: TileComponent[] = [];
+  const visited = new Set<number>();
+  for (const start of filled) {
+    if (visited.has(start)) continue;
+
+    const queue = [start];
+    visited.add(start);
+    let minCol = start % cols;
+    let maxCol = minCol;
+    let minRow = Math.floor(start / cols);
+    let maxRow = minRow;
+
+    while (queue.length > 0) {
+      const index = queue.pop() as number;
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      minCol = Math.min(minCol, col);
+      maxCol = Math.max(maxCol, col);
+      minRow = Math.min(minRow, row);
+      maxRow = Math.max(maxRow, row);
+
+      for (const next of [index - 1, index + 1, index - cols, index + cols]) {
+        if (!filled.has(next) || visited.has(next)) continue;
+        const nextCol = next % cols;
+        if (Math.abs(nextCol - col) > 1) continue;
+        visited.add(next);
+        queue.push(next);
+      }
+    }
+
+    components.push({ minCol, maxCol, minRow, maxRow });
+  }
+
+  return components;
+}
+
+function hazardFromComponent(
+  component: TileComponent,
+  direction: HazardDirection,
+  layer: TiledLayer | undefined,
+  tileW: number,
+  tileH: number,
+  index: number
+): Obstacle {
+  const markerX = component.minCol * tileW;
+  const markerY = component.minRow * tileH;
+  const markerWidth = (component.maxCol - component.minCol + 1) * tileW;
+  const markerHeight = (component.maxRow - component.minRow + 1) * tileH;
+  const size = propertyNumber(layer, "size", Math.min(markerWidth, markerHeight));
+  const x = markerX + markerWidth / 2 - size / 2;
+  const y = markerY + markerHeight / 2 - size / 2;
+  const origin: Vector2 = { x, y };
+  const distance = propertyNumber(layer, "distance", numberFromLayerName(layer, "distance") ?? 350);
+  const speed = propertyNumber(layer, "speed", numberFromLayerName(layer, "speed") ?? 1);
+  const sign = direction === "left" || direction === "up" ? -1 : 1;
+  const movement: Obstacle["movement"] = direction === "left" || direction === "right" ? "horizontal" : "vertical";
+
+  return {
+    id: `hazard-${direction}-${index}`,
+    kind: "hazard" as const,
+    movement,
+    origin,
+    amplitude: sign * distance,
+    speed,
+    phase: 0,
+    position: { ...origin },
+    size: { x: size, y: size }
+  };
+}
+
 function loadLevelFromTiledJson(filePath: string): LoadedMapLevel | null {
   try {
     const raw = readFileSync(filePath, "utf8");
@@ -184,13 +319,18 @@ function loadLevelFromTiledJson(filePath: string): LoadedMapLevel | null {
     };
     const spawnNames = ["spawn_point", "spawn", "start"];
     const goalNames = ["goal_point", "goal"];
-
+    const collectibleNames = ["coin", "coins", "acorn", "acorns"];
     const spawnLayer = findLayerByPriority("objectgroup", spawnNames);
     const goalLayer = findLayerByPriority("objectgroup", goalNames);
     const spawnObj = spawnLayer?.objects?.[0];
     const goalObj = goalLayer?.objects?.[0];
     const startTileLayer = findLayerByPriority("tilelayer", spawnNames);
     const goalTileLayer = findLayerByPriority("tilelayer", goalNames);
+    const collectibleLayer = findLayerByPriority("tilelayer", collectibleNames);
+    const hazardLayers = tiled.layers
+      .filter((layer) => layer.type === "tilelayer")
+      .map((layer) => ({ direction: hazardDirectionFromLayerName(layer), layer }))
+      .filter((entry): entry is { direction: HazardDirection; layer: TiledLayer } => entry.direction !== null);
     const firstFilledTile = (layer?: TiledLayer) => {
       const data = layer?.data;
       if (!data) return null;
@@ -204,6 +344,22 @@ function loadLevelFromTiledJson(filePath: string): LoadedMapLevel | null {
     };
     const spawnTile = firstFilledTile(startTileLayer);
     const goalTile = firstFilledTile(goalTileLayer);
+    const collectibles: Collectible[] = [];
+    const collectibleData = collectibleLayer?.data;
+    if (collectibleData) {
+      for (let i = 0; i < collectibleData.length; i += 1) {
+        if (collectibleData[i] <= 0) continue;
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        collectibles.push({
+          id: `acorn-${col}-${row}`,
+          kind: "acorn",
+          position: { x: col * tileW + tileW / 2, y: row * tileH + tileH / 2 },
+          radius: 28,
+          points: 1
+        });
+      }
+    }
 
     const spawnX = spawnObj ? spawnObj.x + (spawnObj.width ?? 0) / 2 : (spawnTile ? spawnTile.x + tileW / 2 : tileW * 2);
     const spawnY = spawnObj
@@ -215,9 +371,14 @@ function loadLevelFromTiledJson(filePath: string): LoadedMapLevel | null {
     const goalH = goalObj?.height ?? tileH;
     const goalX = goalObj ? goalObj.x : (goalTile ? goalTile.x : (cols - 3) * tileW);
     const goalY = goalObj ? goalObj.y : (goalTile ? goalTile.y : tileH);
+    const hazards = hazardLayers.flatMap(({ direction, layer }, layerIndex) =>
+      filledTileComponents(layer, cols).map((component, index) =>
+        hazardFromComponent(component, direction, layer, tileW, tileH, layerIndex * 1000 + index)
+      )
+    );
 
     const level = {
-      id: "reference-map",
+      id: defaultLevelId,
       width: cols * tileW,
       height: rows * tileH,
       spawn: { x: spawnX, y: spawnY },
@@ -229,8 +390,10 @@ function loadLevelFromTiledJson(filePath: string): LoadedMapLevel | null {
           kind: "goal" as const,
           position: { x: goalX, y: goalY },
           size: { x: goalW, y: goalH }
-        }
-      ]
+        },
+        ...hazards
+      ],
+      collectibles
     };
 
     return { level, collisionRects };
@@ -252,6 +415,8 @@ class WasdRoom extends Room {
   private teamPosition = { ...DEFAULT_LEVEL.spawn };
   private level = structuredClone(DEFAULT_LEVEL);
   private collisionRects: SolidRect[] = [];
+  private collectedCollectibleIds = new Set<string>();
+  private score = 0;
   private roundResult?: RoundResult;
   private readonly snapshotIntervalMs = Math.max(1000 / Math.max(1, snapshotRate), 33);
   private lastSnapshotAt = 0;
@@ -282,7 +447,7 @@ class WasdRoom extends Room {
     }, 0);
   }
 
-  onCreate(options?: { debugSolo?: boolean; visibility?: RoomVisibility }) {
+  onCreate(options?: { debugMoveSpeed?: number; debugSolo?: boolean; visibility?: RoomVisibility }) {
     this.maxClients = 4;
     this.debugSolo = Boolean(options?.debugSolo);
     this.visibility = options?.visibility === "private" ? "private" : "public";
@@ -297,6 +462,7 @@ class WasdRoom extends Room {
     } else {
       this.collisionRects = [];
     }
+    this.level.moveSpeed = resolveDebugMoveSpeed(this.debugSolo, options?.debugMoveSpeed);
 
     this.onMessage("ready_state", (client, payload: { ready: boolean }) => {
       const player = this.playerFromClient(client.sessionId);
@@ -489,6 +655,8 @@ class WasdRoom extends Room {
       level: this.level,
       players: this.serializePlayers(),
       teamPosition: this.teamPosition,
+      score: this.score,
+      collectedCollectibleIds: [...this.collectedCollectibleIds],
       countdownRemainingMs: 0,
       serverTime: current
     };
@@ -534,6 +702,8 @@ class WasdRoom extends Room {
     this.tick = 0;
     this.inputState = emptyInputState();
     this.teamPosition = { ...this.level.spawn };
+    this.collectedCollectibleIds.clear();
+    this.score = 0;
 
     for (const player of this.players.values()) {
       player.ready = false;
@@ -558,6 +728,8 @@ class WasdRoom extends Room {
     this.roundStartAt = Date.now();
     this.inputState = emptyInputState();
     this.teamPosition = { ...this.level.spawn };
+    this.collectedCollectibleIds.clear();
+    this.score = 0;
     this.emitRoomState();
     this.emitSnapshot(true);
   }
@@ -582,34 +754,68 @@ class WasdRoom extends Room {
       return false;
     };
 
-    const respawnAtSpawn = () => {
-      this.teamPosition = { ...this.level.spawn };
-      this.inputState = emptyInputState();
-    };
-
     const nextX = clampX(this.teamPosition.x + direction.x * this.level.moveSpeed * dt);
     if (collidesAt(nextX, this.teamPosition.y)) {
-      respawnAtSpawn();
+      this.respawnAtSpawn();
       return;
     }
     this.teamPosition.x = nextX;
 
     const nextY = clampY(this.teamPosition.y + direction.y * this.level.moveSpeed * dt);
     if (collidesAt(this.teamPosition.x, nextY)) {
-      respawnAtSpawn();
+      this.respawnAtSpawn();
       return;
     }
     this.teamPosition.y = nextY;
   }
 
-  private resolveCollisions(): "win" | "fail" | null {
+  private collectOverlappingCollectibles() {
+    for (const collectible of this.level.collectibles) {
+      if (this.collectedCollectibleIds.has(collectible.id)) continue;
+      const distance = Math.hypot(this.teamPosition.x - collectible.position.x, this.teamPosition.y - collectible.position.y);
+      if (distance > this.level.playerRadius + collectible.radius) continue;
+      this.collectedCollectibleIds.add(collectible.id);
+      this.score += collectible.points;
+    }
+  }
+
+  private updateMovingObstacles() {
+    const elapsedSeconds = this.tick / tickRate;
     for (const obstacle of this.level.obstacles) {
+      if (obstacle.kind !== "hazard" || !obstacle.movement || !obstacle.origin) continue;
+      const progress = (1 - Math.cos(elapsedSeconds * (obstacle.speed ?? 2.2) + (obstacle.phase ?? 0))) / 2;
+      const offset = progress * (obstacle.amplitude ?? 192);
+      if (obstacle.movement === "horizontal") {
+        obstacle.position = { x: obstacle.origin.x + offset, y: obstacle.origin.y };
+      } else {
+        obstacle.position = { x: obstacle.origin.x, y: obstacle.origin.y + offset };
+      }
+    }
+  }
+
+  private respawnAtSpawn() {
+    this.teamPosition = { ...this.level.spawn };
+    this.inputState = emptyInputState();
+  }
+
+  private resolveHazardCollision(): boolean {
+    for (const obstacle of this.level.obstacles) {
+      if (obstacle.kind !== "hazard") continue;
       const hit = circlesIntersectsRect(this.teamPosition, this.level.playerRadius, obstacle.position, obstacle.size);
       if (!hit) continue;
-      if (obstacle.kind === "hazard") return "fail";
-      if (obstacle.kind === "goal") return "win";
+      this.respawnAtSpawn();
+      return true;
     }
-    return null;
+    return false;
+  }
+
+  private resolveGoalCollision(): boolean {
+    for (const obstacle of this.level.obstacles) {
+      if (obstacle.kind !== "goal") continue;
+      const hit = circlesIntersectsRect(this.teamPosition, this.level.playerRadius, obstacle.position, obstacle.size);
+      if (hit) return true;
+    }
+    return false;
   }
 
   private serverTick() {
@@ -646,12 +852,12 @@ class WasdRoom extends Room {
     }
 
     this.tick += 1;
+    this.updateMovingObstacles();
     this.applyMovement(1 / tickRate);
+    this.collectOverlappingCollectibles();
 
-    const result = this.resolveCollisions();
-    if (result === "fail") {
-      this.markRoundFail("trap_hit");
-    } else if (result === "win") {
+    this.resolveHazardCollision();
+    if (this.resolveGoalCollision()) {
       this.markRoundWin();
     }
 
