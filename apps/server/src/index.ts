@@ -76,7 +76,7 @@ interface TiledMap {
   layers: TiledLayer[];
 }
 
-type HazardDirection = "left" | "right" | "up" | "down";
+type HazardDirection = "left" | "right" | "up" | "down" | "circle";
 
 interface TileComponent {
   minCol: number;
@@ -228,7 +228,7 @@ function numberFromLayerName(layer: TiledLayer | undefined, name: string): numbe
 }
 
 function hazardDirectionFromLayerName(layer: TiledLayer): HazardDirection | null {
-  const match = layer.name.toLowerCase().match(/^hazard_(left|right|up|down)(?:_|$)/);
+  const match = layer.name.toLowerCase().match(/^hazard_(left|right|up|down|circle)(?:_|$)/);
   return match ? (match[1] as HazardDirection) : null;
 }
 
@@ -295,15 +295,15 @@ function hazardFromComponent(
   const origin: Vector2 = { x, y };
   const distance = propertyNumber(layer, "distance", numberFromLayerName(layer, "distance") ?? 350);
   const speed = propertyNumber(layer, "speed", numberFromLayerName(layer, "speed") ?? 1);
+  const movement: Obstacle["movement"] = direction === "circle" ? "circular" : direction === "left" || direction === "right" ? "horizontal" : "vertical";
   const sign = direction === "left" || direction === "up" ? -1 : 1;
-  const movement: Obstacle["movement"] = direction === "left" || direction === "right" ? "horizontal" : "vertical";
 
   return {
     id: `hazard-${direction}-${index}`,
     kind: "hazard" as const,
     movement,
     origin,
-    amplitude: sign * distance,
+    amplitude: direction === "circle" ? distance : sign * distance,
     speed,
     phase: 0,
     position: { ...origin },
@@ -839,12 +839,21 @@ class WasdRoom extends Room {
     const elapsedSeconds = this.tick / tickRate;
     for (const obstacle of this.level.obstacles) {
       if (obstacle.kind !== "hazard" || !obstacle.movement || !obstacle.origin) continue;
-      const progress = (1 - Math.cos(elapsedSeconds * (obstacle.speed ?? 2.2) + (obstacle.phase ?? 0))) / 2;
-      const offset = progress * (obstacle.amplitude ?? 192);
-      if (obstacle.movement === "horizontal") {
-        obstacle.position = { x: obstacle.origin.x + offset, y: obstacle.origin.y };
+      if (obstacle.movement === "circular") {
+        const angle = elapsedSeconds * (obstacle.speed ?? 2.2) + (obstacle.phase ?? 0);
+        const radius = obstacle.amplitude ?? 192;
+        obstacle.position = {
+          x: obstacle.origin.x + Math.cos(angle) * radius,
+          y: obstacle.origin.y + Math.sin(angle) * radius
+        };
       } else {
-        obstacle.position = { x: obstacle.origin.x, y: obstacle.origin.y + offset };
+        const progress = (1 - Math.cos(elapsedSeconds * (obstacle.speed ?? 2.2) + (obstacle.phase ?? 0))) / 2;
+        const offset = progress * (obstacle.amplitude ?? 192);
+        if (obstacle.movement === "horizontal") {
+          obstacle.position = { x: obstacle.origin.x + offset, y: obstacle.origin.y };
+        } else {
+          obstacle.position = { x: obstacle.origin.x, y: obstacle.origin.y + offset };
+        }
       }
     }
   }

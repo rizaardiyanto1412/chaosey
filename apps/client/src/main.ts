@@ -92,7 +92,7 @@ const explosionDieAnimKey = "explosion-die";
 const acornSheetKey = "bouncing-acorn-spritesheet";
 const blueSpiritEnemyKey = "blue-spirit-enemy";
 const coinLayerName = "coin";
-const hazardMarkerLayerPattern = /^hazard_(left|right|up|down)(?:_|$)/;
+const hazardMarkerLayerPattern = /^hazard_(left|right|up|down|circle)(?:_|$)/;
 
 let game: Phaser.Game | null = null;
 let gameBootPromise: Promise<void> | null = null;
