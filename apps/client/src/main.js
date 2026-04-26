@@ -74,8 +74,10 @@ const explosionSheetKey = "explosion-spritesheet";
 const explosionDieAnimKey = "explosion-die";
 const acornSheetKey = "bouncing-acorn-spritesheet";
 const blueSpiritEnemyKey = "blue-spirit-enemy";
+const tumbleweedKey = "tumbleweed";
 const coinLayerName = "coin";
 const hazardMarkerLayerPattern = /^hazard_(left|right|up|down|circle)(?:_|$)/;
+const tumbleweedMarkerLayerPattern = /^tumbleweed_(left|right|up|down|circle)(?:_|$)/;
 let game = null;
 let gameBootPromise = null;
 let gameBootResolve = null;
@@ -304,6 +306,7 @@ class MainScene extends Phaser.Scene {
     playerSprite;
     dieSprite;
     hazards = {};
+    tumbleweeds = {};
     acorns = new Map();
     collectedAcornIds = new Set();
     goal;
@@ -396,6 +399,7 @@ class MainScene extends Phaser.Scene {
             frameHeight: 295
         });
         this.load.image(blueSpiritEnemyKey, "/assets/enemies/blue-spirit-hd-transparent.png");
+        this.load.image(tumbleweedKey, "/assets/enemies/tumbleweed-hd-transparent.png");
     }
     create() {
         const tilemap = this.make.tilemap({ key: referenceMapKey(this.renderedLevelId) });
@@ -405,7 +409,7 @@ class MainScene extends Phaser.Scene {
             if (tileset) {
                 let depth = 0;
                 for (const layer of tilemap.layers) {
-                    if (layer.name === coinLayerName || hazardMarkerLayerPattern.test(layer.name.toLowerCase())) {
+                    if (layer.name === coinLayerName || hazardMarkerLayerPattern.test(layer.name.toLowerCase()) || tumbleweedMarkerLayerPattern.test(layer.name.toLowerCase())) {
                         depth += 1;
                         continue;
                     }
@@ -574,6 +578,12 @@ class MainScene extends Phaser.Scene {
             this.hazards[id].destroy();
             delete this.hazards[id];
         }
+        for (const id of Object.keys(this.tumbleweeds)) {
+            if (obstacleTargets.has(id))
+                continue;
+            this.tumbleweeds[id].destroy();
+            delete this.tumbleweeds[id];
+        }
         if (this.goal && ![...obstacleTargets.values()].some((obstacle) => obstacle.kind === "goal")) {
             this.goal.destroy();
             this.goal = undefined;
@@ -588,15 +598,28 @@ class MainScene extends Phaser.Scene {
                 this.goal.setPosition(Phaser.Math.Linear(this.goal.x, obstacle.x, smoothFactor), Phaser.Math.Linear(this.goal.y, obstacle.y, smoothFactor));
                 continue;
             }
-            if (!this.hazards[id]) {
-                this.hazards[id] = this.add.sprite(obstacle.x, obstacle.y, blueSpiritEnemyKey);
-                this.hazards[id].setDepth(175);
-                this.hazards[id].setOrigin(0.5);
+            if (obstacle.kind === "hazard") {
+                if (!this.hazards[id]) {
+                    this.hazards[id] = this.add.sprite(obstacle.x, obstacle.y, blueSpiritEnemyKey);
+                    this.hazards[id].setDepth(175);
+                    this.hazards[id].setOrigin(0.5);
+                }
+                const visualSize = Math.max(obstacle.width, obstacle.height) * 1.25;
+                this.hazards[id].setDisplaySize(visualSize, visualSize);
+                this.hazards[id].setPosition(Phaser.Math.Linear(this.hazards[id].x, obstacle.x, smoothFactor), Phaser.Math.Linear(this.hazards[id].y, obstacle.y, smoothFactor));
+                this.hazards[id].setAlpha(0.92 + Math.sin(_time * 0.008 + id.length) * 0.08);
             }
-            const visualSize = Math.max(obstacle.width, obstacle.height) * 1.25;
-            this.hazards[id].setDisplaySize(visualSize, visualSize);
-            this.hazards[id].setPosition(Phaser.Math.Linear(this.hazards[id].x, obstacle.x, smoothFactor), Phaser.Math.Linear(this.hazards[id].y, obstacle.y, smoothFactor));
-            this.hazards[id].setAlpha(0.92 + Math.sin(_time * 0.008 + id.length) * 0.08);
+            else if (obstacle.kind === "tumbleweed") {
+                if (!this.tumbleweeds[id]) {
+                    this.tumbleweeds[id] = this.add.sprite(obstacle.x, obstacle.y, tumbleweedKey);
+                    this.tumbleweeds[id].setDepth(175);
+                    this.tumbleweeds[id].setOrigin(0.5);
+                }
+                const visualSize = Math.max(obstacle.width, obstacle.height) * 1.25;
+                this.tumbleweeds[id].setDisplaySize(visualSize, visualSize);
+                this.tumbleweeds[id].setPosition(Phaser.Math.Linear(this.tumbleweeds[id].x, obstacle.x, smoothFactor), Phaser.Math.Linear(this.tumbleweeds[id].y, obstacle.y, smoothFactor));
+                this.tumbleweeds[id].setAlpha(0.92 + Math.sin(_time * 0.008 + id.length) * 0.08);
+            }
         }
     }
     syncCollectedAcorns() {

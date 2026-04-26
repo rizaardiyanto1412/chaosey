@@ -77,6 +77,7 @@ interface TiledMap {
 }
 
 type HazardDirection = "left" | "right" | "up" | "down" | "circle";
+type ObstacleKind = "hazard" | "tumbleweed";
 
 interface TileComponent {
   minCol: number;
@@ -227,9 +228,13 @@ function numberFromLayerName(layer: TiledLayer | undefined, name: string): numbe
   return Number.isFinite(value) ? value : undefined;
 }
 
-function hazardDirectionFromLayerName(layer: TiledLayer): HazardDirection | null {
-  const match = layer.name.toLowerCase().match(/^hazard_(left|right|up|down|circle)(?:_|$)/);
+function obstacleDirectionFromLayerName(layer: TiledLayer, kind: ObstacleKind): HazardDirection | null {
+  const match = layer.name.toLowerCase().match(new RegExp(`^${kind}_(left|right|up|down|circle)(?:_|$)`));
   return match ? (match[1] as HazardDirection) : null;
+}
+
+function hazardDirectionFromLayerName(layer: TiledLayer): HazardDirection | null {
+  return obstacleDirectionFromLayerName(layer, "hazard");
 }
 
 function filledTileComponents(layer: TiledLayer | undefined, cols: number): TileComponent[] {
@@ -277,9 +282,10 @@ function filledTileComponents(layer: TiledLayer | undefined, cols: number): Tile
   return components;
 }
 
-function hazardFromComponent(
+function obstacleFromComponent(
   component: TileComponent,
   direction: HazardDirection,
+  kind: ObstacleKind,
   layer: TiledLayer | undefined,
   tileW: number,
   tileH: number,
@@ -299,8 +305,8 @@ function hazardFromComponent(
   const sign = direction === "left" || direction === "up" ? -1 : 1;
 
   return {
-    id: `hazard-${direction}-${index}`,
-    kind: "hazard" as const,
+    id: `${kind}-${direction}-${index}`,
+    kind,
     movement,
     origin,
     amplitude: direction === "circle" ? distance : sign * distance,
@@ -309,6 +315,17 @@ function hazardFromComponent(
     position: { ...origin },
     size: { x: size, y: size }
   };
+}
+
+function hazardFromComponent(
+  component: TileComponent,
+  direction: HazardDirection,
+  layer: TiledLayer | undefined,
+  tileW: number,
+  tileH: number,
+  index: number
+): Obstacle {
+  return obstacleFromComponent(component, direction, "hazard", layer, tileW, tileH, index);
 }
 
 function loadLevelFromTiledJson(filePath: string, levelId: string): LoadedMapLevel | null {
@@ -363,6 +380,10 @@ function loadLevelFromTiledJson(filePath: string, levelId: string): LoadedMapLev
       .filter((layer) => layer.type === "tilelayer")
       .map((layer) => ({ direction: hazardDirectionFromLayerName(layer), layer }))
       .filter((entry): entry is { direction: HazardDirection; layer: TiledLayer } => entry.direction !== null);
+    const tumbleweedLayers = tiled.layers
+      .filter((layer) => layer.type === "tilelayer")
+      .map((layer) => ({ direction: obstacleDirectionFromLayerName(layer, "tumbleweed"), layer }))
+      .filter((entry): entry is { direction: HazardDirection; layer: TiledLayer } => entry.direction !== null);
     const firstFilledTile = (layer?: TiledLayer) => {
       const data = layer?.data;
       if (!data) return null;
@@ -408,6 +429,11 @@ function loadLevelFromTiledJson(filePath: string, levelId: string): LoadedMapLev
         hazardFromComponent(component, direction, layer, tileW, tileH, layerIndex * 1000 + index)
       )
     );
+    const tumbleweeds = tumbleweedLayers.flatMap(({ direction, layer }, layerIndex) =>
+      filledTileComponents(layer, cols).map((component, index) =>
+        obstacleFromComponent(component, direction, "tumbleweed", layer, tileW, tileH, layerIndex * 1000 + index)
+      )
+    );
 
     const level = {
       id: levelId,
@@ -423,7 +449,8 @@ function loadLevelFromTiledJson(filePath: string, levelId: string): LoadedMapLev
           position: { x: goalX, y: goalY },
           size: { x: goalW, y: goalH }
         },
-        ...hazards
+        ...hazards,
+        ...tumbleweeds
       ],
       collectibles
     };
@@ -838,7 +865,7 @@ class WasdRoom extends Room {
   private updateMovingObstacles() {
     const elapsedSeconds = this.tick / tickRate;
     for (const obstacle of this.level.obstacles) {
-      if (obstacle.kind !== "hazard" || !obstacle.movement || !obstacle.origin) continue;
+      if ((obstacle.kind !== "hazard" && obstacle.kind !== "tumbleweed") || !obstacle.movement || !obstacle.origin) continue;
       if (obstacle.movement === "circular") {
         const angle = elapsedSeconds * (obstacle.speed ?? 2.2) + (obstacle.phase ?? 0);
         const radius = obstacle.amplitude ?? 192;
@@ -865,7 +892,7 @@ class WasdRoom extends Room {
 
   private resolveHazardCollision(): boolean {
     for (const obstacle of this.level.obstacles) {
-      if (obstacle.kind !== "hazard") continue;
+      if (obstacle.kind !== "hazard" && obstacle.kind !== "tumbleweed") continue;
       const hit = circlesIntersectsRect(this.teamPosition, this.level.playerRadius, obstacle.position, obstacle.size);
       if (!hit) continue;
       this.respawnAtSpawn();
