@@ -78,6 +78,7 @@ let currentVisibility: RoomVisibility = "public";
 let currentDebugSolo = false;
 let myRoomId = "";
 let availableRooms: LobbyRoomSummary[] = [];
+let previousPlayerCount = 0;
 
 let targetTeamPosition = { x: 100, y: 100 };
 const obstacleTargets = new Map<
@@ -121,6 +122,10 @@ let pendingDieAnimation:
     }
   | null = null;
 let audioContext: AudioContext | null = null;
+let soundtrackAudio: HTMLAudioElement | null = null;
+let lobbyAudio: HTMLAudioElement | null = null;
+let currentSoundtrackLevel: string | null = null;
+let isSoundtrackFading = false;
 
 type WebKitAudioWindow = Window &
   typeof globalThis & {
@@ -165,6 +170,7 @@ function showMenu(status = "") {
   finalCompletionMs = null;
   pendingDieAnimation = null;
   menuStatusEl.textContent = status;
+  void playLobbySound();
 }
 
 function showLoading(label: string) {
@@ -319,6 +325,238 @@ function playBoomSound() {
   noiseGain.connect(ctx.destination);
   noise.start(startedAt);
   noise.stop(startedAt + duration);
+}
+
+function playNotificationSound() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  if (ctx.state === "suspended") {
+    void ctx.resume();
+  }
+
+  const startedAt = ctx.currentTime;
+  const duration = 0.15;
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, startedAt);
+  gain.gain.linearRampToValueAtTime(1.0, startedAt + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + duration);
+  gain.connect(ctx.destination);
+
+  const oscillator = ctx.createOscillator();
+  oscillator.type = "sine";
+  oscillator.frequency.setValueAtTime(880, startedAt);
+  oscillator.frequency.setValueAtTime(1100, startedAt + 0.05);
+  oscillator.frequency.setValueAtTime(880, startedAt + 0.1);
+  oscillator.connect(gain);
+  oscillator.start(startedAt);
+  oscillator.stop(startedAt + duration);
+}
+
+function playRoomCreatedSound() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  if (ctx.state === "suspended") {
+    void ctx.resume();
+  }
+
+  const startedAt = ctx.currentTime;
+  const duration = 0.4;
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, startedAt);
+  gain.gain.linearRampToValueAtTime(1.0, startedAt + 0.03);
+  gain.gain.setValueAtTime(1.0, startedAt + 0.2);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + duration);
+  gain.connect(ctx.destination);
+
+  const oscillator = ctx.createOscillator();
+  oscillator.type = "sine";
+  oscillator.frequency.setValueAtTime(523.25, startedAt);
+  oscillator.frequency.setValueAtTime(659.25, startedAt + 0.1);
+  oscillator.frequency.setValueAtTime(783.99, startedAt + 0.2);
+  oscillator.frequency.setValueAtTime(1046.5, startedAt + 0.3);
+  oscillator.connect(gain);
+  oscillator.start(startedAt);
+  oscillator.stop(startedAt + duration);
+}
+
+function playCoinSound() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  if (ctx.state === "suspended") {
+    void ctx.resume();
+  }
+
+  const startedAt = ctx.currentTime;
+  const duration = 0.25;
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, startedAt);
+  gain.gain.linearRampToValueAtTime(0.6, startedAt + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + duration);
+  gain.connect(ctx.destination);
+
+  const oscillator = ctx.createOscillator();
+  oscillator.type = "sine";
+  oscillator.frequency.setValueAtTime(880, startedAt);
+  oscillator.frequency.setValueAtTime(1108.73, startedAt + 0.05);
+  oscillator.frequency.setValueAtTime(1318.51, startedAt + 0.1);
+  oscillator.frequency.setValueAtTime(1760, startedAt + 0.15);
+  oscillator.connect(gain);
+  oscillator.start(startedAt);
+  oscillator.stop(startedAt + duration);
+}
+
+function getSoundtrackForLevel(levelId: string): string {
+  const levelNum = parseInt(levelId.replace(/\D/g, ""), 10);
+  if (levelNum >= 1 && levelNum <= 3) return "/assets/sounds/1-3.mp3";
+  if (levelNum >= 4 && levelNum <= 6) return "/assets/sounds/4-6.mp3";
+  if (levelNum >= 7 && levelNum <= 9) return "/assets/sounds/7-9.mp3";
+  return "/assets/sounds/10.mp3";
+}
+
+function getSoundtrackGroup(levelId: string): string {
+  const levelNum = parseInt(levelId.replace(/\D/g, ""), 10);
+  if (levelNum >= 1 && levelNum <= 3) return "1-3";
+  if (levelNum >= 4 && levelNum <= 6) return "4-6";
+  if (levelNum >= 7 && levelNum <= 9) return "7-9";
+  return "10";
+}
+
+async function playSoundtrack(levelId: string) {
+  const soundtrackFile = getSoundtrackForLevel(levelId);
+  const newGroup = getSoundtrackGroup(levelId);
+
+  console.log("[Soundtrack] Playing", soundtrackFile, "for level", levelId, "group", newGroup);
+
+  if (currentSoundtrackLevel && getSoundtrackGroup(currentSoundtrackLevel) === newGroup) {
+    console.log("[Soundtrack] Same group, skipping");
+    return;
+  }
+
+  if (soundtrackAudio) {
+    await stopSoundtrack();
+  }
+
+  soundtrackAudio = new Audio(soundtrackFile);
+  soundtrackAudio.loop = true;
+  soundtrackAudio.volume = 0;
+
+  soundtrackAudio.addEventListener("canplaythrough", () => {
+    console.log("[Soundtrack] Audio can play through");
+  });
+
+  soundtrackAudio.addEventListener("error", (e) => {
+    console.error("[Soundtrack] Audio error:", e);
+  });
+
+  soundtrackAudio.addEventListener("loadeddata", () => {
+    console.log("[Soundtrack] Audio loaded data, duration:", soundtrackAudio!.duration);
+  });
+
+  try {
+    await soundtrackAudio.play();
+    console.log("[Soundtrack] Play started successfully");
+  } catch (err) {
+    console.error("[Soundtrack] Play error:", err);
+    return;
+  }
+
+  const fadeInDuration = 3000;
+  const startTime = Date.now();
+  const fadeInterval = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(elapsed / fadeInDuration, 1);
+    if (soundtrackAudio) {
+      soundtrackAudio.volume = progress * 0.4;
+    }
+
+    if (progress >= 1) {
+      clearInterval(fadeInterval);
+    }
+  }, 50);
+
+  currentSoundtrackLevel = levelId;
+  isSoundtrackFading = false;
+}
+
+async function stopSoundtrack() {
+  if (!soundtrackAudio) return;
+
+  isSoundtrackFading = true;
+  const startVolume = soundtrackAudio.volume;
+  const fadeOutDuration = 3000;
+  const startTime = Date.now();
+
+  const fadeInterval = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(elapsed / fadeOutDuration, 1);
+    soundtrackAudio!.volume = startVolume * (1 - progress);
+
+    if (progress >= 1) {
+      clearInterval(fadeInterval);
+      soundtrackAudio!.pause();
+      soundtrackAudio = null;
+      currentSoundtrackLevel = null;
+      isSoundtrackFading = false;
+    }
+  }, 50);
+}
+
+async function playLobbySound() {
+  if (lobbyAudio) {
+    await stopLobbySound();
+  }
+
+  lobbyAudio = new Audio("/assets/sounds/lobby.mp3");
+  lobbyAudio.loop = true;
+  lobbyAudio.volume = 0;
+
+  try {
+    await lobbyAudio.play();
+  } catch (err) {
+    console.error("[Lobby] Play error:", err);
+    return;
+  }
+
+  const fadeInDuration = 3000;
+  const startTime = Date.now();
+  const fadeInterval = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(elapsed / fadeInDuration, 1);
+    if (lobbyAudio) {
+      lobbyAudio.volume = progress * 0.3;
+    }
+
+    if (progress >= 1) {
+      clearInterval(fadeInterval);
+    }
+  }, 50);
+}
+
+async function stopLobbySound() {
+  if (!lobbyAudio) return;
+
+  const startVolume = lobbyAudio.volume;
+  const fadeOutDuration = 3000;
+  const startTime = Date.now();
+
+  const fadeInterval = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(elapsed / fadeOutDuration, 1);
+    if (lobbyAudio) {
+      lobbyAudio.volume = startVolume * (1 - progress);
+    }
+
+    if (progress >= 1) {
+      clearInterval(fadeInterval);
+      if (lobbyAudio) {
+        lobbyAudio.pause();
+        lobbyAudio = null;
+      }
+    }
+  }, 50);
 }
 
 function handlePress(key: string) {
@@ -574,6 +812,8 @@ class MainScene extends Phaser.Scene {
     this.input.keyboard?.on("keydown", (event: KeyboardEvent) => handlePress(event.key));
     this.input.keyboard?.on("keyup", (event: KeyboardEvent) => handleRelease(event.key));
 
+    void playSoundtrack(this.renderedLevelId);
+
     signalGameBooted();
   }
 
@@ -754,6 +994,7 @@ class MainScene extends Phaser.Scene {
       const acorn = this.acorns.get(id);
       if (!acorn || this.collectedAcornIds.has(id)) continue;
       this.collectedAcornIds.add(id);
+      playCoinSound();
       const popup = this.add.text(acorn.x, acorn.y - 46, "+1", {
         fontFamily: "Trebuchet MS",
         fontSize: "26px",
@@ -1197,6 +1438,12 @@ function bindRoom(room: Room) {
         kind: obstacle.kind
       });
     }
+    const currentPlayerCount = state.players.length;
+    const isHost = state.hostId === myPlayerId;
+    if (state.roomState === "lobby" && isHost && currentPlayerCount > previousPlayerCount && previousPlayerCount > 0) {
+      playNotificationSound();
+    }
+    previousPlayerCount = currentPlayerCount;
     writePersistedRoom();
     updateUi();
   });
@@ -1212,6 +1459,12 @@ function bindRoom(room: Room) {
     if (result.outcome === "win" && result.completionMs !== undefined) {
       finalCompletionMs = result.completionMs;
       showWinReveal(result);
+      if (latestState) {
+        const currentLevelNum = parseInt(latestState.level.id.replace(/\D/g, ""), 10);
+        if (currentLevelNum === 3 || currentLevelNum === 6 || currentLevelNum === 9 || currentLevelNum === 10) {
+          void stopSoundtrack();
+        }
+      }
     }
     updateUi();
   });
@@ -1238,6 +1491,7 @@ function bindRoom(room: Room) {
     obstacleTargets.clear();
     pendingDieAnimation = null;
     clearPersistedRoom();
+    void stopSoundtrack();
     updateUi();
     if (!isTransitioningRoom) {
       showMenu(hasEnteredGame ? "Disconnected from the room." : "");
@@ -1263,6 +1517,7 @@ async function quitToMenu() {
   myRoomId = "";
   obstacleTargets.clear();
   pendingDieAnimation = null;
+  void stopSoundtrack();
   updateUi();
   showMenu();
   isTransitioningRoom = false;
@@ -1273,6 +1528,7 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
     isTransitioningRoom = true;
     showLoading(options.roomId || options.roomCode ? "Joining room..." : "Creating your room...");
     await leaveCurrentRoom();
+    await stopLobbySound();
     const reconnectPlayerId = options.reconnectPlayerId;
     latestResult = null;
     latestState = null;
@@ -1306,6 +1562,7 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
         visibility: currentVisibility
       });
       myRoomId = currentRoom.roomId;
+      playRoomCreatedSound();
     }
 
     bindRoom(currentRoom);
