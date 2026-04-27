@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json && vite build",
-    "start": "serve -s dist -l 3000",
+    "start": "serve -s dist -l tcp://0.0.0.0:${PORT:-3000}",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
