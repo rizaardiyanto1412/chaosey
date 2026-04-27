@@ -37645,7 +37645,7 @@
     },
     {
       "id": 11,
-      "name": "fireball_left_speed_0.2_distance_4480",
+      "name": "fireball_left_speed_1_distance_4480",
       "opacity": 1,
       "type": "tilelayer",
       "visible": true,

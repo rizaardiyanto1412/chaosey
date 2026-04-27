@@ -906,7 +906,16 @@ class WasdRoom extends Room {
   }
 
   private respawnAtSpawn() {
-    this.teamPosition = { ...this.level.spawn };
+    if (this.debugSolo && this.level.collectibles.length > 0) {
+      const nearestCollectible = this.level.collectibles.reduce((nearest, collectible) => {
+        const nearestDistance = Math.hypot(this.teamPosition.x - nearest.position.x, this.teamPosition.y - nearest.position.y);
+        const collectibleDistance = Math.hypot(this.teamPosition.x - collectible.position.x, this.teamPosition.y - collectible.position.y);
+        return collectibleDistance < nearestDistance ? collectible : nearest;
+      });
+      this.teamPosition = { ...nearestCollectible.position };
+    } else {
+      this.teamPosition = { ...this.level.spawn };
+    }
     this.inputState = emptyInputState();
   }
 
