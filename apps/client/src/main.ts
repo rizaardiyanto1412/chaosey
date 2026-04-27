@@ -4,10 +4,13 @@ import { mapKeyToRole } from "./lib/input";
 import type {
   GameState,
   JoinedRoomPayload,
+  LevelData,
+  LevelLoadedPayload,
   LobbyRoomSummary,
   PlayerRole,
   RoomVisibility,
-  RoundResult
+  RoundResult,
+  StateSnapshotPayload
 } from "@wasd/shared";
 import { DEFAULT_LEVEL_ID } from "@wasd/shared";
 
@@ -72,6 +75,7 @@ const isDebugCreatePath = window.location.pathname === "/debugxthing";
 
 let currentRoom: Room | null = null;
 let latestState: GameState | null = null;
+let currentLevel: LevelData | null = null;
 let latestResult: RoundResult | null = null;
 let myRoles: PlayerRole[] = [];
 let myPlayerId = "";
@@ -1488,7 +1492,43 @@ function bindRoom(room: Room) {
     updateCreateRoomSummary();
   });
 
-  room.onMessage("state_snapshot", (state: GameState) => {
+  room.onMessage("level_loaded", ({ level }: LevelLoadedPayload) => {
+    currentLevel = level;
+    if (latestState) {
+      latestState.level = level;
+    }
+  });
+
+  room.onMessage("state_snapshot", (snapshot: StateSnapshotPayload) => {
+    if (!currentLevel || currentLevel.id !== snapshot.levelId) {
+      // Snapshot arrived before its matching level_loaded; ignore until in sync.
+      return;
+    }
+    // Apply moving-obstacle position updates onto the cached level.
+    if (snapshot.obstaclePositions.length > 0) {
+      const byId = new Map(snapshot.obstaclePositions.map((u) => [u.id, u] as const));
+      for (const obstacle of currentLevel.obstacles) {
+        const update = byId.get(obstacle.id);
+        if (update) {
+          obstacle.position = { x: update.x, y: update.y };
+        }
+      }
+    }
+
+    const state: GameState = {
+      roomCode: snapshot.roomCode,
+      hostId: snapshot.hostId,
+      roomState: snapshot.roomState,
+      tick: snapshot.tick,
+      level: currentLevel,
+      players: snapshot.players,
+      teamPosition: snapshot.teamPosition,
+      score: snapshot.score,
+      collectedCollectibleIds: snapshot.collectedCollectibleIds,
+      countdownRemainingMs: snapshot.countdownRemainingMs,
+      serverTime: snapshot.serverTime
+    };
+
     const previousState = latestState;
     latestState = state;
     const mainScene = game?.scene.getScene("main") as MainScene | undefined;
@@ -1575,6 +1615,7 @@ function bindRoom(room: Room) {
   room.onLeave(() => {
     currentRoom = null;
     latestState = null;
+    currentLevel = null;
     latestResult = null;
     myRoles = [];
     myPlayerId = "";
@@ -1603,6 +1644,7 @@ async function quitToMenu() {
   clearPersistedRoom();
   await leaveCurrentRoom();
   latestState = null;
+  currentLevel = null;
   latestResult = null;
   myRoles = [];
   myPlayerId = "";
@@ -1625,6 +1667,7 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
     const reconnectPlayerId = options.reconnectPlayerId;
     latestResult = null;
     latestState = null;
+    currentLevel = null;
     myRoles = [];
     myPlayerId = "";
     roomCode = "";

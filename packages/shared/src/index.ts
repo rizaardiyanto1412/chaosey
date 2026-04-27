@@ -75,6 +75,31 @@ export interface GameState {
   serverTime: number;
 }
 
+export interface LevelLoadedPayload {
+  level: LevelData;
+}
+
+export interface ObstaclePositionUpdate {
+  id: string;
+  x: number;
+  y: number;
+}
+
+export interface StateSnapshotPayload {
+  roomCode: string;
+  hostId: string;
+  roomState: RoomState;
+  tick: number;
+  levelId: string;
+  players: PlayerStatus[];
+  teamPosition: Vector2;
+  score: number;
+  collectedCollectibleIds: string[];
+  countdownRemainingMs: number;
+  serverTime: number;
+  obstaclePositions: ObstaclePositionUpdate[];
+}
+
 export interface RoundResult {
   outcome: "win" | "fail";
   winCondition?: WinCondition;

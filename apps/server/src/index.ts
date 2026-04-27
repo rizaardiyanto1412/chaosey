@@ -19,15 +19,17 @@ import {
   type Obstacle,
   roleBundlesForPlayerCount,
   type FailReason,
-  type GameState,
   type InputState,
   type JoinedRoomPayload,
+  type LevelLoadedPayload,
+  type ObstaclePositionUpdate,
   type PlayerRole,
   type PlayerStatus,
   type RoomMetadata,
   type RoomState,
   type RoomVisibility,
   type RoundResult,
+  type StateSnapshotPayload,
   type Vector2
 } from "@wasd/shared";
 
@@ -522,6 +524,8 @@ class WasdRoom extends Room {
     this.clock.setTimeout(() => {
       client.send("joined_room", joinedPayload);
       client.send("assign_role", { roles });
+      const levelPayload: LevelLoadedPayload = { level: this.level };
+      client.send("level_loaded", levelPayload);
       this.emitPlayerStatus();
       this.emitRoomState();
       this.emitSnapshot(true);
@@ -746,18 +750,29 @@ class WasdRoom extends Room {
     }
     this.lastSnapshotAt = current;
 
-    const payload: GameState = {
+    const obstaclePositions: ObstaclePositionUpdate[] = [];
+    for (const obstacle of this.level.obstacles) {
+      if (!obstacle.movement) continue;
+      obstaclePositions.push({
+        id: obstacle.id,
+        x: obstacle.position.x,
+        y: obstacle.position.y
+      });
+    }
+
+    const payload: StateSnapshotPayload = {
       roomCode: this.roomCode,
       hostId: this.hostId,
       roomState: this.roomState,
       tick: this.tick,
-      level: this.level,
+      levelId: this.level.id,
       players: this.serializePlayers(),
       teamPosition: this.teamPosition,
       score: this.score,
       collectedCollectibleIds: [...this.collectedCollectibleIds],
       countdownRemainingMs: 0,
-      serverTime: current
+      serverTime: current,
+      obstaclePositions
     };
     this.broadcast("state_snapshot", payload);
   }
@@ -809,7 +824,13 @@ class WasdRoom extends Room {
     this.inputState = emptyInputState();
     this.collectedCollectibleIds.clear();
     this.score = 0;
+    this.broadcastLevelLoaded();
     return true;
+  }
+
+  private broadcastLevelLoaded() {
+    const payload: LevelLoadedPayload = { level: this.level };
+    this.broadcast("level_loaded", payload);
   }
 
   private advanceLevelOrWin() {
