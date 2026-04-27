@@ -557,10 +557,13 @@ function updateScoreDisplay() {
     const total = latestState?.level.collectibles.length ?? 0;
     scoreEl.textContent = `${collected} / ${total}`;
 }
+function connectedPlayers() {
+    return latestState?.players.filter((player) => player.connected) ?? [];
+}
 function renderRoster() {
     if (!rosterEl)
         return;
-    const players = latestState?.players ?? [];
+    const players = connectedPlayers();
     if (players.length === 0) {
         rosterEl.hidden = true;
         rosterEl.innerHTML = "";
@@ -1043,7 +1046,7 @@ function updateCreateRoomSummary() {
     setVisibility(createRoomSetupEl, !hasRoom);
     createdRoomCodeEl.textContent = roomCode || "----";
     createdRoomMetaEl.textContent = `Visibility: ${currentVisibility === "public" ? "Public" : "Private"}`;
-    const playerCount = latestState?.players.length ?? (currentRoom ? 1 : 0);
+    const playerCount = latestState ? connectedPlayers().length : currentRoom ? 1 : 0;
     createdRoomPlayersEl.textContent = `${playerCount}/4`;
     if (!roomCode) {
         confirmCreateRoomEl.textContent = "Create Room";
@@ -1059,7 +1062,7 @@ function updateCreateRoomSummary() {
     confirmCreateRoomEl.title = canStartFromModal ? "Start the run" : "Need at least 2 players to start.";
 }
 function updateStartAvailability() {
-    const playerCount = latestState?.players.length ?? 0;
+    const playerCount = connectedPlayers().length;
     const canStart = currentDebugSolo ? playerCount >= 1 : playerCount >= 2;
     confirmCreateRoomEl.title = roomCode ? (canStart ? "Start the run" : "Need at least 2 players to start.") : "Create room";
 }
@@ -1141,7 +1144,7 @@ function updateLobbyOverlay() {
     setVisibility(lobbyOverlayEl, shouldShow);
     if (!shouldShow)
         return;
-    const playerCount = latestState.players.length;
+    const playerCount = connectedPlayers().length;
     const canStart = currentDebugSolo ? playerCount >= 1 : playerCount >= 2;
     const neededPlayers = currentDebugSolo ? 1 : 2;
     lobbyOverlayTitleEl.textContent = isHost ? "Waiting For Players" : "Waiting For Host";
@@ -1168,6 +1171,11 @@ function updateLobbyOverlay() {
         lobbyStartGameEl.disabled = !canStart;
         lobbyStartGameEl.style.opacity = canStart ? "1" : "0.55";
         lobbyStartGameEl.title = canStart ? "Start the run" : "Need at least 2 players to start.";
+    }
+    else {
+        lobbyStartGameEl.disabled = true;
+        lobbyStartGameEl.style.opacity = "0.55";
+        lobbyStartGameEl.title = "Only the host can start the run.";
     }
     lobbyOverlayFootnoteEl.textContent = isHost
         ? canStart
