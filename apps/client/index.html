@@ -208,6 +208,7 @@
 
       .menu-actions {
         display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
       }
 
@@ -267,6 +268,12 @@
         background:
           linear-gradient(180deg, rgba(252, 239, 204, 0.11), rgba(252, 239, 204, 0.05)),
           rgba(7, 19, 26, 0.55);
+      }
+
+      @media (max-width: 560px) {
+        .menu-actions {
+          grid-template-columns: 1fr;
+        }
       }
 
       .menu-status {
@@ -616,60 +623,221 @@
         padding: 16px 18px;
       }
 
-      .hud-top-left {
-        top: 18px;
-        left: 18px;
-        width: min(340px, calc(100vw - 36px));
-        display: grid;
-        gap: 8px;
+      .hud-debug {
+        display: none;
       }
 
-      .hud-top-right {
+      /* Combined score + timer pill, top-center */
+      .hud-top-center {
         top: 18px;
-        right: 18px;
+        left: 50%;
+        transform: translateX(-50%);
         display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 22px 10px 14px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, rgba(14, 42, 44, 0.92), rgba(6, 18, 24, 0.9));
+        border: 1px solid rgba(247, 211, 125, 0.28);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 241, 197, 0.12),
+          0 10px 30px rgba(0, 0, 0, 0.4);
+      }
+
+      .hud-score {
+        display: inline-flex;
+        align-items: center;
         gap: 10px;
+        color: #fff4d5;
+        font-size: 1.35rem;
+        font-weight: 900;
+        letter-spacing: 0.02em;
+        padding-right: 14px;
+        border-right: 1px solid rgba(247, 211, 125, 0.22);
+      }
+
+      .hud-score .acorn-icon {
+        width: 30px;
+        height: 30px;
+        filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+        flex: 0 0 auto;
       }
 
       .hud-timer {
         font-family: "Trebuchet MS", "Segoe UI", sans-serif;
-        font-size: 2.2rem;
+        font-size: 1.7rem;
         font-weight: 800;
         color: #f7d37d;
         text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
-        letter-spacing: 0.04em;
-        min-width: 140px;
+        letter-spacing: 0.06em;
+        min-width: 112px;
         text-align: center;
+        font-variant-numeric: tabular-nums;
       }
 
-      .hud-score {
-        min-width: 112px;
+      /* Player roster on the right */
+      .hud-roster {
+        top: 50%;
+        right: 22px;
+        transform: translateY(-50%);
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        border-radius: 22px;
+        background: linear-gradient(180deg, rgba(14, 42, 44, 0.92), rgba(6, 18, 24, 0.86));
+        border: 1px solid rgba(247, 211, 125, 0.28);
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
+        min-width: 220px;
+      }
+
+      .hud-roster[hidden] {
+        display: none;
+      }
+
+      .roster-row {
         display: flex;
         align-items: center;
-        justify-content: center;
-        gap: 8px;
-        color: #fff4d5;
-        font-size: 1.45rem;
-        font-weight: 900;
+        gap: 14px;
+        padding: 8px 14px 8px 8px;
+        border-radius: 16px;
+        background: rgba(255, 246, 221, 0.04);
+        border: 1px solid rgba(255, 246, 221, 0.08);
       }
 
-      .hud-score::before {
-        content: "";
-        width: 34px;
-        height: 34px;
-        border-radius: 50%;
+      .roster-row.is-me {
+        background: rgba(247, 211, 125, 0.14);
+        border-color: rgba(247, 211, 125, 0.45);
+      }
+
+      .roster-row.is-offline {
+        opacity: 0.5;
+      }
+
+      .roster-key {
+        width: 36px;
+        height: 36px;
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        border-radius: 12px;
         background:
-          radial-gradient(circle at 38% 34%, #fff2a8 0 16%, transparent 17%),
-          radial-gradient(circle at 50% 50%, #f4b63f 0 58%, #7a3d14 60% 100%);
-        box-shadow: inset 0 0 0 3px rgba(255, 246, 195, 0.35), 0 3px 10px rgba(0, 0, 0, 0.35);
+          linear-gradient(180deg, rgba(255, 241, 197, 0.18), rgba(144, 98, 42, 0.35)),
+          linear-gradient(180deg, #9a6530 0%, #643716 100%);
+        color: #fff6dd;
+        font-weight: 900;
+        font-size: 1.05rem;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 241, 197, 0.22),
+          inset 0 -2px 0 rgba(58, 29, 10, 0.5),
+          0 3px 10px rgba(0, 0, 0, 0.35);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+        letter-spacing: 0.02em;
+      }
+
+      .roster-key + .roster-key {
+        margin-left: 4px;
+      }
+
+      .roster-keys {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+      }
+
+      .roster-name {
+        color: #fff4d5;
+        font-size: 1rem;
+        font-weight: 700;
+        max-width: 140px;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        letter-spacing: 0.01em;
+      }
+
+      /* Sound toggle button (cute, used in menu + HUD) */
+      .sound-toggle {
+        position: absolute;
+        width: 58px;
+        height: 58px;
+        border-radius: 50%;
+        border: 0;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+        color: #fff6dd;
+        background:
+          radial-gradient(circle at 30% 26%, rgba(255, 241, 197, 0.3), transparent 46%),
+          linear-gradient(180deg, #b77a3b 0%, #7a4620 58%, #5b2f13 100%);
+        border: 2px solid rgba(255, 228, 150, 0.42);
+        box-shadow:
+          inset 0 2px 0 rgba(255, 241, 197, 0.25),
+          inset 0 -3px 0 rgba(40, 20, 6, 0.6),
+          0 10px 22px rgba(0, 0, 0, 0.42);
+        transition: transform 160ms ease, filter 160ms ease, box-shadow 160ms ease;
+        pointer-events: auto;
+        z-index: 9;
+      }
+
+      .sound-toggle:hover,
+      .sound-toggle:focus-visible {
+        transform: translateY(-2px) rotate(-4deg);
+        filter: brightness(1.06);
+        outline: none;
+      }
+
+      .sound-toggle:active {
+        transform: translateY(0) scale(0.96);
+      }
+
+      .sound-toggle svg {
+        width: 30px;
+        height: 30px;
+        filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+      }
+
+      .sound-toggle .icon-muted { display: none; }
+      .sound-toggle.is-muted .icon-on { display: none; }
+      .sound-toggle.is-muted .icon-muted { display: block; }
+
+      .sound-toggle .note {
+        transform-origin: 16px 18px;
+        animation: sound-note-bob 1.8s ease-in-out infinite;
+      }
+      .sound-toggle .note.delay {
+        animation-delay: 0.6s;
+      }
+      .sound-toggle.is-muted .note {
+        animation: none;
+      }
+
+      @keyframes sound-note-bob {
+        0%, 100% { transform: translateY(0) rotate(-6deg); }
+        50% { transform: translateY(-2px) rotate(6deg); }
+      }
+
+      .sound-toggle.menu-sound-toggle {
+        left: 24px;
+        bottom: 24px;
       }
 
       .hud-bottom-left {
         left: 18px;
         bottom: 18px;
-        width: min(360px, calc(100vw - 36px));
-        display: grid;
-        gap: 8px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        pointer-events: auto;
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+        padding: 0;
+        backdrop-filter: none;
+      }
+
+      .hud-bottom-left .sound-toggle {
+        position: static;
       }
 
       .hud-panel h2 {
@@ -706,24 +874,7 @@
       }
 
       .touch {
-        position: absolute;
-        right: 18px;
-        bottom: 18px;
-        display: grid;
-        grid-template-columns: repeat(3, 62px);
-        gap: 10px;
-        pointer-events: auto;
-      }
-
-      .touch button {
-        width: 62px;
-        height: 62px;
-        border: 0;
-        border-radius: 18px;
-        background: rgba(8, 20, 23, 0.72);
-        color: #fff4d5;
-        border: 1px solid rgba(255, 233, 183, 0.18);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        display: none;
       }
 
       .modal-backdrop {
@@ -751,6 +902,10 @@
         display: flex;
         justify-content: flex-end;
         gap: 10px;
+      }
+
+      .modal-actions[hidden] {
+        display: none;
       }
 
       .leaderboard-list {
@@ -859,28 +1014,42 @@
           font-size: clamp(2.6rem, 15vw, 4.4rem);
         }
 
-        .hud-top-left,
-        .hud-bottom-left {
-          width: min(100%, calc(100vw - 32px));
-        }
-
-        .touch {
-          grid-template-columns: repeat(3, 56px);
-          gap: 8px;
-        }
-
-        .touch button {
-          width: 56px;
-          height: 56px;
+        .hud-roster {
+          top: auto;
+          bottom: 96px;
+          right: 16px;
+          transform: none;
+          min-width: 150px;
         }
       }
 
       @media (max-width: 640px) {
-        .hud-top-right {
-          top: auto;
-          right: 16px;
-          bottom: 150px;
-          flex-direction: column;
+        .hud-top-center {
+          padding: 8px 16px 8px 10px;
+        }
+
+        .hud-timer {
+          font-size: 1.3rem;
+          min-width: 86px;
+        }
+
+        .hud-score {
+          font-size: 1.1rem;
+        }
+
+        .hud-score .acorn-icon {
+          width: 24px;
+          height: 24px;
+        }
+
+        .sound-toggle {
+          width: 50px;
+          height: 50px;
+        }
+
+        .sound-toggle svg {
+          width: 26px;
+          height: 26px;
         }
 
         .hud-button {
@@ -927,6 +1096,18 @@
             <div class="menu-status" id="menuStatus"></div>
           </div>
         </div>
+        <button id="menuSoundToggle" class="sound-toggle menu-sound-toggle" type="button" aria-label="Toggle soundtrack" title="Mute music">
+          <svg class="icon-on" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M6 12h4l6-5v18l-6-5H6z" fill="#fff6dd" stroke="#5a2f12" stroke-width="1.6" stroke-linejoin="round"/>
+            <circle class="note" cx="23" cy="11" r="2.2" fill="#ffe08a" stroke="#5a2f12" stroke-width="1.2"/>
+            <path class="note" d="M25.2 11V5.5" stroke="#5a2f12" stroke-width="1.6" stroke-linecap="round"/>
+            <path class="note delay" d="M20.5 18c1.8 1 2.8 2.6 2.8 4.4" stroke="#ffe08a" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+          </svg>
+          <svg class="icon-muted" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M6 12h4l6-5v18l-6-5H6z" fill="#fff6dd" stroke="#5a2f12" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M21 12l7 8M28 12l-7 8" stroke="#ff8c74" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </button>
       </section>
 
       <section class="screen loading-screen" id="loadingScreen" hidden>
@@ -938,30 +1119,53 @@
       </section>
 
       <section class="hud" id="hud" hidden>
-        <div class="hud-panel hud-top-left">
+        <div class="hud-debug">
           <h2 id="role">Role: -</h2>
           <div class="hud-meta" id="room">Room: -</div>
           <div class="hud-copy" id="state">State: -</div>
           <div class="hud-copy" id="latency">RTT: - ms</div>
-          <div class="hud-actions">
-            <button id="quitGame" class="hud-button" type="button">Quit</button>
-          </div>
+          <div class="meta-list" id="players">Players: -</div>
         </div>
 
-        <div class="hud-panel hud-top-right">
-          <div class="hud-score" id="score">0 / 0</div>
+        <div class="hud-panel hud-top-center">
+          <div class="hud-score" id="score">
+            <svg class="acorn-icon" viewBox="0 0 40 40" aria-hidden="true">
+              <defs>
+                <linearGradient id="acornCap" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#8a4a1f"/>
+                  <stop offset="1" stop-color="#5a2c10"/>
+                </linearGradient>
+                <linearGradient id="acornBody" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#f0b15e"/>
+                  <stop offset="1" stop-color="#b6722b"/>
+                </linearGradient>
+              </defs>
+              <path d="M20 5c-1 0-1.8 1-1.8 2.2 0 .4.1.8.3 1.1-4.2.6-7.4 3.2-7.4 6 0 1.1 1 2 2.2 2h13.4c1.2 0 2.2-.9 2.2-2 0-2.8-3.2-5.4-7.4-6 .2-.3.3-.7.3-1.1C21.8 6 21 5 20 5z" fill="url(#acornCap)" stroke="#3d1c07" stroke-width="1.2" stroke-linejoin="round"/>
+              <path d="M12 16h16c0 9-3.8 18-8 18s-8-9-8-18z" fill="url(#acornBody)" stroke="#3d1c07" stroke-width="1.2" stroke-linejoin="round"/>
+              <ellipse cx="16.5" cy="22" rx="1.6" ry="2.6" fill="#fff6cf" opacity="0.55"/>
+              <path d="M20 34v2.2" stroke="#3d1c07" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <span id="scoreText">0 / 0</span>
+          </div>
           <div class="hud-timer" id="timer">00:00.00</div>
         </div>
 
-        <div class="hud-panel hud-bottom-left">
-          <div class="meta-list" id="players">Players: -</div>
-          <div class="hint">Keyboard: each player controls only their assigned letter. Touch controls stay available on mobile.</div>
-        </div>
+        <div class="hud-panel hud-roster" id="hudRoster" hidden></div>
 
-        <div class="touch">
-          <div></div><button data-role="W" type="button">W</button><div></div>
-          <button data-role="A" type="button">A</button><button data-role="S" type="button">S</button><button data-role="D" type="button">D</button>
-          <div></div><div></div><div></div>
+        <div class="hud-panel hud-bottom-left">
+          <button id="hudSoundToggle" class="sound-toggle" type="button" aria-label="Toggle soundtrack" title="Mute music">
+            <svg class="icon-on" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <path d="M6 12h4l6-5v18l-6-5H6z" fill="#fff6dd" stroke="#5a2f12" stroke-width="1.6" stroke-linejoin="round"/>
+              <circle class="note" cx="23" cy="11" r="2.2" fill="#ffe08a" stroke="#5a2f12" stroke-width="1.2"/>
+              <path class="note" d="M25.2 11V5.5" stroke="#5a2f12" stroke-width="1.6" stroke-linecap="round"/>
+              <path class="note delay" d="M20.5 18c1.8 1 2.8 2.6 2.8 4.4" stroke="#ffe08a" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+            </svg>
+            <svg class="icon-muted" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <path d="M6 12h4l6-5v18l-6-5H6z" fill="#fff6dd" stroke="#5a2f12" stroke-width="1.6" stroke-linejoin="round"/>
+              <path d="M21 12l7 8M28 12l-7 8" stroke="#ff8c74" stroke-width="2.2" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button id="quitGame" class="hud-button" type="button">Quit</button>
         </div>
       </section>
 

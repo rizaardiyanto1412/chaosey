@@ -57,7 +57,10 @@ const roleRevealOverlayEl = document.getElementById("roleRevealOverlay") as HTML
 const roleRevealKeysEl = document.getElementById("roleRevealKeys") as HTMLDivElement;
 const roleRevealCaptionEl = document.getElementById("roleRevealCaption") as HTMLDivElement;
 const timerEl = document.getElementById("timer") as HTMLDivElement;
-const scoreEl = document.getElementById("score") as HTMLDivElement;
+const scoreEl = document.getElementById("scoreText") as HTMLSpanElement;
+const rosterEl = document.getElementById("hudRoster") as HTMLDivElement;
+const hudSoundToggleEl = document.getElementById("hudSoundToggle") as HTMLButtonElement;
+const menuSoundToggleEl = document.getElementById("menuSoundToggle") as HTMLButtonElement;
 const leaderboardModalEl = document.getElementById("leaderboardModal") as HTMLElement;
 const leaderboardListEl = document.getElementById("leaderboardList") as HTMLDivElement;
 
@@ -126,6 +129,16 @@ let soundtrackAudio: HTMLAudioElement | null = null;
 let lobbyAudio: HTMLAudioElement | null = null;
 let currentSoundtrackLevel: string | null = null;
 let isSoundtrackFading = false;
+const mutePrefKey = "key-chaos.muted";
+let isMuted = (() => {
+  try {
+    return window.localStorage.getItem(mutePrefKey) === "1";
+  } catch {
+    return false;
+  }
+})();
+const soundtrackBaseVolume = 0.4;
+const lobbyBaseVolume = 0.3;
 
 type WebKitAudioWindow = Window &
   typeof globalThis & {
@@ -469,7 +482,7 @@ async function playSoundtrack(levelId: string) {
     const elapsed = Date.now() - startTime;
     const progress = Math.min(elapsed / fadeInDuration, 1);
     if (soundtrackAudio) {
-      soundtrackAudio.volume = progress * 0.4;
+      soundtrackAudio.volume = isMuted ? 0 : progress * soundtrackBaseVolume;
     }
 
     if (progress >= 1) {
@@ -513,26 +526,41 @@ async function playLobbySound() {
   lobbyAudio.loop = true;
   lobbyAudio.volume = 0;
 
-  try {
-    await lobbyAudio.play();
-  } catch (err) {
-    console.error("[Lobby] Play error:", err);
-    return;
-  }
+  const attemptPlay = async () => {
+    try {
+      if (!lobbyAudio) return;
+      await lobbyAudio.play();
+      const fadeInDuration = 3000;
+      const startTime = Date.now();
+      const fadeInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / fadeInDuration, 1);
+        if (lobbyAudio) {
+          lobbyAudio.volume = isMuted ? 0 : progress * lobbyBaseVolume;
+        }
 
-  const fadeInDuration = 3000;
-  const startTime = Date.now();
-  const fadeInterval = setInterval(() => {
-    const elapsed = Date.now() - startTime;
-    const progress = Math.min(elapsed / fadeInDuration, 1);
-    if (lobbyAudio) {
-      lobbyAudio.volume = progress * 0.3;
+        if (progress >= 1) {
+          clearInterval(fadeInterval);
+        }
+      }, 50);
+    } catch (err) {
+      if ((err as Error).name === "NotAllowedError") {
+        const handleInteraction = () => {
+          document.removeEventListener("click", handleInteraction);
+          document.removeEventListener("keydown", handleInteraction);
+          document.removeEventListener("touchstart", handleInteraction);
+          void attemptPlay();
+        };
+        document.addEventListener("click", handleInteraction, { once: true });
+        document.addEventListener("keydown", handleInteraction, { once: true });
+        document.addEventListener("touchstart", handleInteraction, { once: true });
+      } else {
+        console.error("[Lobby] Play error:", err);
+      }
     }
+  };
 
-    if (progress >= 1) {
-      clearInterval(fadeInterval);
-    }
-  }, 50);
+  void attemptPlay();
 }
 
 async function stopLobbySound() {
@@ -602,6 +630,63 @@ function updateScoreDisplay() {
   const collected = latestState?.score ?? 0;
   const total = latestState?.level.collectibles.length ?? 0;
   scoreEl.textContent = `${collected} / ${total}`;
+}
+
+function connectedPlayers() {
+  return latestState?.players.filter((player) => player.connected) ?? [];
+}
+
+function renderRoster() {
+  if (!rosterEl) return;
+  const players = connectedPlayers();
+  if (players.length === 0) {
+    rosterEl.hidden = true;
+    rosterEl.innerHTML = "";
+    return;
+  }
+  rosterEl.hidden = false;
+  const rows = players
+    .map((player) => {
+      const keys = (player.roles ?? [])
+        .map((role) => `<span class="roster-key">${role}</span>`)
+        .join("");
+      const classes = [
+        "roster-row",
+        player.id === myPlayerId ? "is-me" : "",
+        player.connected ? "" : "is-offline"
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const name = (player.name ?? "Player").replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] ?? c)
+      );
+      return `<div class="${classes}"><div class="roster-keys">${keys || '<span class="roster-key">?</span>'}</div><div class="roster-name">${name}</div></div>`;
+    })
+    .join("");
+  rosterEl.innerHTML = rows;
+}
+
+function applyMuteState() {
+  if (soundtrackAudio) soundtrackAudio.volume = isMuted ? 0 : soundtrackBaseVolume;
+  if (lobbyAudio) lobbyAudio.volume = isMuted ? 0 : lobbyBaseVolume;
+  const label = isMuted ? "Unmute music" : "Mute music";
+  for (const btn of [hudSoundToggleEl, menuSoundToggleEl]) {
+    if (!btn) continue;
+    btn.classList.toggle("is-muted", isMuted);
+    btn.setAttribute("aria-pressed", isMuted ? "true" : "false");
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  }
+}
+
+function toggleMute() {
+  isMuted = !isMuted;
+  try {
+    window.localStorage.setItem(mutePrefKey, isMuted ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+  applyMuteState();
 }
 
 class MainScene extends Phaser.Scene {
@@ -1065,7 +1150,7 @@ function updateCreateRoomSummary() {
   setVisibility(createRoomSetupEl, !hasRoom);
   createdRoomCodeEl.textContent = roomCode || "----";
   createdRoomMetaEl.textContent = `Visibility: ${currentVisibility === "public" ? "Public" : "Private"}`;
-  const playerCount = latestState?.players.length ?? (currentRoom ? 1 : 0);
+  const playerCount = latestState ? connectedPlayers().length : currentRoom ? 1 : 0;
   createdRoomPlayersEl.textContent = `${playerCount}/4`;
 
   if (!roomCode) {
@@ -1084,7 +1169,7 @@ function updateCreateRoomSummary() {
 }
 
 function updateStartAvailability() {
-  const playerCount = latestState?.players.length ?? 0;
+  const playerCount = connectedPlayers().length;
   const canStart = currentDebugSolo ? playerCount >= 1 : playerCount >= 2;
   confirmCreateRoomEl.title = roomCode ? (canStart ? "Start the run" : "Need at least 2 players to start.") : "Create room";
 }
@@ -1175,7 +1260,7 @@ function updateLobbyOverlay() {
   setVisibility(lobbyOverlayEl, shouldShow);
   if (!shouldShow) return;
 
-  const playerCount = latestState.players.length;
+  const playerCount = connectedPlayers().length;
   const canStart = currentDebugSolo ? playerCount >= 1 : playerCount >= 2;
   const neededPlayers = currentDebugSolo ? 1 : 2;
   lobbyOverlayTitleEl.textContent = isHost ? "Waiting For Players" : "Waiting For Host";
@@ -1196,10 +1281,17 @@ function updateLobbyOverlay() {
     <strong class="lobby-badge-value">${latestState.roomCode}</strong>
     <span class="lobby-badge-note">Share this code</span>
   `;
+  console.log("[Lobby] isHost:", isHost, "myPlayerId:", myPlayerId, "hostId:", latestState.hostId);
   setVisibility(lobbyOverlayActionsEl, isHost);
-  lobbyStartGameEl.disabled = !canStart;
-  lobbyStartGameEl.style.opacity = canStart ? "1" : "0.55";
-  lobbyStartGameEl.title = canStart ? "Start the run" : "Need at least 2 players to start.";
+  if (isHost) {
+    lobbyStartGameEl.disabled = !canStart;
+    lobbyStartGameEl.style.opacity = canStart ? "1" : "0.55";
+    lobbyStartGameEl.title = canStart ? "Start the run" : "Need at least 2 players to start.";
+  } else {
+    lobbyStartGameEl.disabled = true;
+    lobbyStartGameEl.style.opacity = "0.55";
+    lobbyStartGameEl.title = "Only the host can start the run.";
+  }
   lobbyOverlayFootnoteEl.textContent = isHost
     ? canStart
       ? "Press start when everyone is ready."
@@ -1238,6 +1330,7 @@ function updateUi() {
   updateLobbyOverlay();
   syncLobbyControls();
   updateScoreDisplay();
+  renderRoster();
 }
 
 function hydrateMyRolesFromPlayers(players: GameState["players"]) {
@@ -1685,4 +1778,15 @@ setSelectedVisibility("public");
 updateDebugSpeedControl();
 renderRoomList();
 updateUi();
+
+hudSoundToggleEl?.addEventListener("click", () => {
+  unlockAudio();
+  toggleMute();
+});
+menuSoundToggleEl?.addEventListener("click", () => {
+  unlockAudio();
+  toggleMute();
+});
+applyMuteState();
+
 void resumePersistedRoom();

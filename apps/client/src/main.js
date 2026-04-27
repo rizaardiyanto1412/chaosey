@@ -47,7 +47,10 @@ const roleRevealOverlayEl = document.getElementById("roleRevealOverlay");
 const roleRevealKeysEl = document.getElementById("roleRevealKeys");
 const roleRevealCaptionEl = document.getElementById("roleRevealCaption");
 const timerEl = document.getElementById("timer");
-const scoreEl = document.getElementById("score");
+const scoreEl = document.getElementById("scoreText");
+const rosterEl = document.getElementById("hudRoster");
+const hudSoundToggleEl = document.getElementById("hudSoundToggle");
+const menuSoundToggleEl = document.getElementById("menuSoundToggle");
 const leaderboardModalEl = document.getElementById("leaderboardModal");
 const leaderboardListEl = document.getElementById("leaderboardList");
 const touchButtons = document.querySelectorAll("[data-role]");
@@ -103,6 +106,17 @@ let soundtrackAudio = null;
 let lobbyAudio = null;
 let currentSoundtrackLevel = null;
 let isSoundtrackFading = false;
+const mutePrefKey = "key-chaos.muted";
+let isMuted = (() => {
+    try {
+        return window.localStorage.getItem(mutePrefKey) === "1";
+    }
+    catch {
+        return false;
+    }
+})();
+const soundtrackBaseVolume = 0.4;
+const lobbyBaseVolume = 0.3;
 function setVisibility(element, isVisible) {
     element.hidden = !isVisible;
 }
@@ -404,7 +418,7 @@ async function playSoundtrack(levelId) {
         const elapsed = Date.now() - startTime;
         const progress = Math.min(elapsed / fadeInDuration, 1);
         if (soundtrackAudio) {
-            soundtrackAudio.volume = progress * 0.4;
+            soundtrackAudio.volume = isMuted ? 0 : progress * soundtrackBaseVolume;
         }
         if (progress >= 1) {
             clearInterval(fadeInterval);
@@ -440,25 +454,42 @@ async function playLobbySound() {
     lobbyAudio = new Audio("/assets/sounds/lobby.mp3");
     lobbyAudio.loop = true;
     lobbyAudio.volume = 0;
-    try {
-        await lobbyAudio.play();
-    }
-    catch (err) {
-        console.error("[Lobby] Play error:", err);
-        return;
-    }
-    const fadeInDuration = 3000;
-    const startTime = Date.now();
-    const fadeInterval = setInterval(() => {
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(elapsed / fadeInDuration, 1);
-        if (lobbyAudio) {
-            lobbyAudio.volume = progress * 0.3;
+    const attemptPlay = async () => {
+        try {
+            if (!lobbyAudio)
+                return;
+            await lobbyAudio.play();
+            const fadeInDuration = 3000;
+            const startTime = Date.now();
+            const fadeInterval = setInterval(() => {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / fadeInDuration, 1);
+                if (lobbyAudio) {
+                    lobbyAudio.volume = isMuted ? 0 : progress * lobbyBaseVolume;
+                }
+                if (progress >= 1) {
+                    clearInterval(fadeInterval);
+                }
+            }, 50);
         }
-        if (progress >= 1) {
-            clearInterval(fadeInterval);
+        catch (err) {
+            if (err.name === "NotAllowedError") {
+                const handleInteraction = () => {
+                    document.removeEventListener("click", handleInteraction);
+                    document.removeEventListener("keydown", handleInteraction);
+                    document.removeEventListener("touchstart", handleInteraction);
+                    void attemptPlay();
+                };
+                document.addEventListener("click", handleInteraction, { once: true });
+                document.addEventListener("keydown", handleInteraction, { once: true });
+                document.addEventListener("touchstart", handleInteraction, { once: true });
+            }
+            else {
+                console.error("[Lobby] Play error:", err);
+            }
         }
-    }, 50);
+    };
+    void attemptPlay();
 }
 async function stopLobbySound() {
     if (!lobbyAudio)
@@ -525,6 +556,59 @@ function updateScoreDisplay() {
     const collected = latestState?.score ?? 0;
     const total = latestState?.level.collectibles.length ?? 0;
     scoreEl.textContent = `${collected} / ${total}`;
+}
+function renderRoster() {
+    if (!rosterEl)
+        return;
+    const players = latestState?.players ?? [];
+    if (players.length === 0) {
+        rosterEl.hidden = true;
+        rosterEl.innerHTML = "";
+        return;
+    }
+    rosterEl.hidden = false;
+    const rows = players
+        .map((player) => {
+        const keys = (player.roles ?? [])
+            .map((role) => `<span class="roster-key">${role}</span>`)
+            .join("");
+        const classes = [
+            "roster-row",
+            player.id === myPlayerId ? "is-me" : "",
+            player.connected ? "" : "is-offline"
+        ]
+            .filter(Boolean)
+            .join(" ");
+        const name = (player.name ?? "Player").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] ?? c));
+        return `<div class="${classes}"><div class="roster-keys">${keys || '<span class="roster-key">?</span>'}</div><div class="roster-name">${name}</div></div>`;
+    })
+        .join("");
+    rosterEl.innerHTML = rows;
+}
+function applyMuteState() {
+    if (soundtrackAudio)
+        soundtrackAudio.volume = isMuted ? 0 : soundtrackBaseVolume;
+    if (lobbyAudio)
+        lobbyAudio.volume = isMuted ? 0 : lobbyBaseVolume;
+    const label = isMuted ? "Unmute music" : "Mute music";
+    for (const btn of [hudSoundToggleEl, menuSoundToggleEl]) {
+        if (!btn)
+            continue;
+        btn.classList.toggle("is-muted", isMuted);
+        btn.setAttribute("aria-pressed", isMuted ? "true" : "false");
+        btn.setAttribute("aria-label", label);
+        btn.title = label;
+    }
+}
+function toggleMute() {
+    isMuted = !isMuted;
+    try {
+        window.localStorage.setItem(mutePrefKey, isMuted ? "1" : "0");
+    }
+    catch {
+        /* ignore */
+    }
+    applyMuteState();
 }
 class MainScene extends Phaser.Scene {
     playerSprite;
@@ -1078,10 +1162,13 @@ function updateLobbyOverlay() {
     <strong class="lobby-badge-value">${latestState.roomCode}</strong>
     <span class="lobby-badge-note">Share this code</span>
   `;
+    console.log("[Lobby] isHost:", isHost, "myPlayerId:", myPlayerId, "hostId:", latestState.hostId);
     setVisibility(lobbyOverlayActionsEl, isHost);
-    lobbyStartGameEl.disabled = !canStart;
-    lobbyStartGameEl.style.opacity = canStart ? "1" : "0.55";
-    lobbyStartGameEl.title = canStart ? "Start the run" : "Need at least 2 players to start.";
+    if (isHost) {
+        lobbyStartGameEl.disabled = !canStart;
+        lobbyStartGameEl.style.opacity = canStart ? "1" : "0.55";
+        lobbyStartGameEl.title = canStart ? "Start the run" : "Need at least 2 players to start.";
+    }
     lobbyOverlayFootnoteEl.textContent = isHost
         ? canStart
             ? "Press start when everyone is ready."
@@ -1116,6 +1203,7 @@ function updateUi() {
     updateLobbyOverlay();
     syncLobbyControls();
     updateScoreDisplay();
+    renderRoster();
 }
 function hydrateMyRolesFromPlayers(players) {
     if (!myPlayerId)
@@ -1530,4 +1618,13 @@ setSelectedVisibility("public");
 updateDebugSpeedControl();
 renderRoomList();
 updateUi();
+hudSoundToggleEl?.addEventListener("click", () => {
+    unlockAudio();
+    toggleMute();
+});
+menuSoundToggleEl?.addEventListener("click", () => {
+    unlockAudio();
+    toggleMute();
+});
+applyMuteState();
 void resumePersistedRoom();

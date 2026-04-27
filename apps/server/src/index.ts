@@ -666,6 +666,13 @@ class WasdRoom extends Room {
     this.sessionToPlayerId.delete(client.sessionId);
     if (!player) return;
 
+    if (this.roomState === "lobby") {
+      this.removePlayer(player.playerId);
+      this.emitPlayerStatus();
+      this.emitSnapshot(true);
+      return;
+    }
+
     player.connected = false;
     player.disconnectedAt = now();
     for (const role of player.roles) {
@@ -714,6 +721,22 @@ class WasdRoom extends Room {
   private emitRoomState() {
     this.broadcast("room_state", { state: this.roomState, countdownRemainingMs: 0 });
     this.updateRoomMetadata();
+  }
+
+  private removePlayer(playerId: string): boolean {
+    const player = this.players.get(playerId);
+    if (!player) return false;
+
+    this.players.delete(playerId);
+    if (player.sessionId) {
+      this.sessionToPlayerId.delete(player.sessionId);
+    }
+    if (this.hostId === playerId) {
+      const nextHost = [...this.players.values()][0];
+      this.hostId = nextHost?.playerId ?? "";
+    }
+    this.rebalanceRoles();
+    return true;
   }
 
   private emitSnapshot(force = false) {
@@ -942,10 +965,17 @@ class WasdRoom extends Room {
   private serverTick() {
     const nowAt = now();
     let playerStatusChanged = false;
+    const playersToRemove: string[] = [];
 
     for (const player of this.players.values()) {
-      if (!player.connected && player.disconnectedAt && nowAt - player.disconnectedAt > disconnectGraceMs && this.roomState === "playing") {
-        this.markRoundFail("disconnect_timeout");
+      if (!player.connected && player.disconnectedAt) {
+        if (this.roomState === "lobby") {
+          playersToRemove.push(player.playerId);
+        } else if (nowAt - player.disconnectedAt > disconnectGraceMs && this.roomState === "playing") {
+          this.markRoundFail("disconnect_timeout");
+        } else if (nowAt - player.disconnectedAt > disconnectGraceMs) {
+          playersToRemove.push(player.playerId);
+        }
       }
 
       if (
@@ -963,12 +993,17 @@ class WasdRoom extends Room {
       }
     }
 
+    for (const playerId of playersToRemove) {
+      playerStatusChanged = this.removePlayer(playerId) || playerStatusChanged;
+    }
+
     if (playerStatusChanged) {
       this.emitPlayerStatus();
+      this.updateRoomMetadata();
     }
 
     if (this.roomState !== "playing") {
-      this.emitSnapshot();
+      this.emitSnapshot(playerStatusChanged);
       return;
     }
 
