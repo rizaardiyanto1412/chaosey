@@ -23,6 +23,8 @@ const lobbyOverlayTitleEl = document.getElementById("lobbyOverlayTitle");
 const lobbyOverlayTextEl = document.getElementById("lobbyOverlayText");
 const lobbyOverlayPlayersEl = document.getElementById("lobbyOverlayPlayers");
 const lobbyOverlayRoomEl = document.getElementById("lobbyOverlayRoom");
+const lobbyOverlayActionsEl = document.getElementById("lobbyOverlayActions");
+const lobbyStartGameEl = document.getElementById("lobbyStartGame");
 const lobbyOverlayFootnoteEl = document.getElementById("lobbyOverlayFootnote");
 const howToModalEl = document.getElementById("howToModal");
 const createRoomModalEl = document.getElementById("createRoomModal");
@@ -64,6 +66,7 @@ let currentVisibility = "public";
 let currentDebugSolo = false;
 let myRoomId = "";
 let availableRooms = [];
+let previousPlayerCount = 0;
 let targetTeamPosition = { x: 100, y: 100 };
 const obstacleTargets = new Map();
 const referenceMapKey = (levelId) => `reference-map-${levelId}`;
@@ -96,6 +99,10 @@ let clientRoundStartAt = 0;
 let finalCompletionMs = null;
 let pendingDieAnimation = null;
 let audioContext = null;
+let soundtrackAudio = null;
+let lobbyAudio = null;
+let currentSoundtrackLevel = null;
+let isSoundtrackFading = false;
 function setVisibility(element, isVisible) {
     element.hidden = !isVisible;
 }
@@ -125,6 +132,7 @@ function showMenu(status = "") {
     finalCompletionMs = null;
     pendingDieAnimation = null;
     menuStatusEl.textContent = status;
+    void playLobbySound();
 }
 function showLoading(label) {
     closeAllModals();
@@ -266,6 +274,212 @@ function playBoomSound() {
     noiseGain.connect(ctx.destination);
     noise.start(startedAt);
     noise.stop(startedAt + duration);
+}
+function playNotificationSound() {
+    const ctx = getAudioContext();
+    if (!ctx)
+        return;
+    if (ctx.state === "suspended") {
+        void ctx.resume();
+    }
+    const startedAt = ctx.currentTime;
+    const duration = 0.15;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, startedAt);
+    gain.gain.linearRampToValueAtTime(1.0, startedAt + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + duration);
+    gain.connect(ctx.destination);
+    const oscillator = ctx.createOscillator();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, startedAt);
+    oscillator.frequency.setValueAtTime(1100, startedAt + 0.05);
+    oscillator.frequency.setValueAtTime(880, startedAt + 0.1);
+    oscillator.connect(gain);
+    oscillator.start(startedAt);
+    oscillator.stop(startedAt + duration);
+}
+function playRoomCreatedSound() {
+    const ctx = getAudioContext();
+    if (!ctx)
+        return;
+    if (ctx.state === "suspended") {
+        void ctx.resume();
+    }
+    const startedAt = ctx.currentTime;
+    const duration = 0.4;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, startedAt);
+    gain.gain.linearRampToValueAtTime(1.0, startedAt + 0.03);
+    gain.gain.setValueAtTime(1.0, startedAt + 0.2);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + duration);
+    gain.connect(ctx.destination);
+    const oscillator = ctx.createOscillator();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(523.25, startedAt);
+    oscillator.frequency.setValueAtTime(659.25, startedAt + 0.1);
+    oscillator.frequency.setValueAtTime(783.99, startedAt + 0.2);
+    oscillator.frequency.setValueAtTime(1046.5, startedAt + 0.3);
+    oscillator.connect(gain);
+    oscillator.start(startedAt);
+    oscillator.stop(startedAt + duration);
+}
+function playCoinSound() {
+    const ctx = getAudioContext();
+    if (!ctx)
+        return;
+    if (ctx.state === "suspended") {
+        void ctx.resume();
+    }
+    const startedAt = ctx.currentTime;
+    const duration = 0.25;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, startedAt);
+    gain.gain.linearRampToValueAtTime(0.6, startedAt + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + duration);
+    gain.connect(ctx.destination);
+    const oscillator = ctx.createOscillator();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, startedAt);
+    oscillator.frequency.setValueAtTime(1108.73, startedAt + 0.05);
+    oscillator.frequency.setValueAtTime(1318.51, startedAt + 0.1);
+    oscillator.frequency.setValueAtTime(1760, startedAt + 0.15);
+    oscillator.connect(gain);
+    oscillator.start(startedAt);
+    oscillator.stop(startedAt + duration);
+}
+function getSoundtrackForLevel(levelId) {
+    const levelNum = parseInt(levelId.replace(/\D/g, ""), 10);
+    if (levelNum >= 1 && levelNum <= 3)
+        return "/assets/sounds/1-3.mp3";
+    if (levelNum >= 4 && levelNum <= 6)
+        return "/assets/sounds/4-6.mp3";
+    if (levelNum >= 7 && levelNum <= 9)
+        return "/assets/sounds/7-9.mp3";
+    return "/assets/sounds/10.mp3";
+}
+function getSoundtrackGroup(levelId) {
+    const levelNum = parseInt(levelId.replace(/\D/g, ""), 10);
+    if (levelNum >= 1 && levelNum <= 3)
+        return "1-3";
+    if (levelNum >= 4 && levelNum <= 6)
+        return "4-6";
+    if (levelNum >= 7 && levelNum <= 9)
+        return "7-9";
+    return "10";
+}
+async function playSoundtrack(levelId) {
+    const soundtrackFile = getSoundtrackForLevel(levelId);
+    const newGroup = getSoundtrackGroup(levelId);
+    console.log("[Soundtrack] Playing", soundtrackFile, "for level", levelId, "group", newGroup);
+    if (currentSoundtrackLevel && getSoundtrackGroup(currentSoundtrackLevel) === newGroup) {
+        console.log("[Soundtrack] Same group, skipping");
+        return;
+    }
+    if (soundtrackAudio) {
+        await stopSoundtrack();
+    }
+    soundtrackAudio = new Audio(soundtrackFile);
+    soundtrackAudio.loop = true;
+    soundtrackAudio.volume = 0;
+    soundtrackAudio.addEventListener("canplaythrough", () => {
+        console.log("[Soundtrack] Audio can play through");
+    });
+    soundtrackAudio.addEventListener("error", (e) => {
+        console.error("[Soundtrack] Audio error:", e);
+    });
+    soundtrackAudio.addEventListener("loadeddata", () => {
+        console.log("[Soundtrack] Audio loaded data, duration:", soundtrackAudio.duration);
+    });
+    try {
+        await soundtrackAudio.play();
+        console.log("[Soundtrack] Play started successfully");
+    }
+    catch (err) {
+        console.error("[Soundtrack] Play error:", err);
+        return;
+    }
+    const fadeInDuration = 3000;
+    const startTime = Date.now();
+    const fadeInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / fadeInDuration, 1);
+        if (soundtrackAudio) {
+            soundtrackAudio.volume = progress * 0.4;
+        }
+        if (progress >= 1) {
+            clearInterval(fadeInterval);
+        }
+    }, 50);
+    currentSoundtrackLevel = levelId;
+    isSoundtrackFading = false;
+}
+async function stopSoundtrack() {
+    if (!soundtrackAudio)
+        return;
+    isSoundtrackFading = true;
+    const startVolume = soundtrackAudio.volume;
+    const fadeOutDuration = 3000;
+    const startTime = Date.now();
+    const fadeInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / fadeOutDuration, 1);
+        soundtrackAudio.volume = startVolume * (1 - progress);
+        if (progress >= 1) {
+            clearInterval(fadeInterval);
+            soundtrackAudio.pause();
+            soundtrackAudio = null;
+            currentSoundtrackLevel = null;
+            isSoundtrackFading = false;
+        }
+    }, 50);
+}
+async function playLobbySound() {
+    if (lobbyAudio) {
+        await stopLobbySound();
+    }
+    lobbyAudio = new Audio("/assets/sounds/lobby.mp3");
+    lobbyAudio.loop = true;
+    lobbyAudio.volume = 0;
+    try {
+        await lobbyAudio.play();
+    }
+    catch (err) {
+        console.error("[Lobby] Play error:", err);
+        return;
+    }
+    const fadeInDuration = 3000;
+    const startTime = Date.now();
+    const fadeInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / fadeInDuration, 1);
+        if (lobbyAudio) {
+            lobbyAudio.volume = progress * 0.3;
+        }
+        if (progress >= 1) {
+            clearInterval(fadeInterval);
+        }
+    }, 50);
+}
+async function stopLobbySound() {
+    if (!lobbyAudio)
+        return;
+    const startVolume = lobbyAudio.volume;
+    const fadeOutDuration = 3000;
+    const startTime = Date.now();
+    const fadeInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / fadeOutDuration, 1);
+        if (lobbyAudio) {
+            lobbyAudio.volume = startVolume * (1 - progress);
+        }
+        if (progress >= 1) {
+            clearInterval(fadeInterval);
+            if (lobbyAudio) {
+                lobbyAudio.pause();
+                lobbyAudio = null;
+            }
+        }
+    }, 50);
 }
 function handlePress(key) {
     unlockAudio();
@@ -512,6 +726,7 @@ class MainScene extends Phaser.Scene {
         this.cameras.main.setBackgroundColor("#0f172a");
         this.input.keyboard?.on("keydown", (event) => handlePress(event.key));
         this.input.keyboard?.on("keyup", (event) => handleRelease(event.key));
+        void playSoundtrack(this.renderedLevelId);
         signalGameBooted();
     }
     playDieAnimation(position, keepPlayerHidden) {
@@ -677,6 +892,7 @@ class MainScene extends Phaser.Scene {
             if (!acorn || this.collectedAcornIds.has(id))
                 continue;
             this.collectedAcornIds.add(id);
+            playCoinSound();
             const popup = this.add.text(acorn.x, acorn.y - 46, "+1", {
                 fontFamily: "Trebuchet MS",
                 fontSize: "26px",
@@ -837,20 +1053,40 @@ function updateLobbyOverlay() {
         return;
     }
     const isHost = latestState.hostId === myPlayerId;
-    const shouldShow = latestState.roomState === "lobby" && !isHost;
+    const shouldShow = latestState.roomState === "lobby";
     setVisibility(lobbyOverlayEl, shouldShow);
     if (!shouldShow)
         return;
     const playerCount = latestState.players.length;
-    lobbyOverlayTitleEl.textContent = "Waiting For Host";
-    lobbyOverlayTextEl.textContent =
-        playerCount > 1
+    const canStart = currentDebugSolo ? playerCount >= 1 : playerCount >= 2;
+    const neededPlayers = currentDebugSolo ? 1 : 2;
+    lobbyOverlayTitleEl.textContent = isHost ? "Waiting For Players" : "Waiting For Host";
+    lobbyOverlayTextEl.textContent = isHost
+        ? playerCount > 1
+            ? "Everyone is in position. Start the run whenever you are ready."
+            : "Room created. Share the room code and wait for at least one more player."
+        : playerCount > 1
             ? "Everyone is in position. The host can start the run whenever they are ready."
             : "You joined successfully. Waiting for the host and more players before the run begins.";
-    lobbyOverlayPlayersEl.textContent = `Players: ${playerCount}/4`;
-    lobbyOverlayRoomEl.textContent = `Room: ${latestState.roomCode}`;
-    lobbyOverlayFootnoteEl.textContent =
-        playerCount > 1
+    lobbyOverlayPlayersEl.innerHTML = `
+    <span class="lobby-badge-label">Players</span>
+    <strong class="lobby-badge-value">${playerCount}/4</strong>
+    <span class="lobby-badge-note">${canStart ? "Ready to start" : `Need ${neededPlayers} to start`}</span>
+  `;
+    lobbyOverlayRoomEl.innerHTML = `
+    <span class="lobby-badge-label">Room Code</span>
+    <strong class="lobby-badge-value">${latestState.roomCode}</strong>
+    <span class="lobby-badge-note">Share this code</span>
+  `;
+    setVisibility(lobbyOverlayActionsEl, isHost);
+    lobbyStartGameEl.disabled = !canStart;
+    lobbyStartGameEl.style.opacity = canStart ? "1" : "0.55";
+    lobbyStartGameEl.title = canStart ? "Start the run" : "Need at least 2 players to start.";
+    lobbyOverlayFootnoteEl.textContent = isHost
+        ? canStart
+            ? "Press start when everyone is ready."
+            : "You need at least one more player before the game can start."
+        : playerCount > 1
             ? "You do not need to do anything here. The game will begin for you as soon as the host presses start."
             : "The host needs at least one more player before the game can start.";
 }
@@ -1064,6 +1300,12 @@ function bindRoom(room) {
                 kind: obstacle.kind
             });
         }
+        const currentPlayerCount = state.players.length;
+        const isHost = state.hostId === myPlayerId;
+        if (state.roomState === "lobby" && isHost && currentPlayerCount > previousPlayerCount && previousPlayerCount > 0) {
+            playNotificationSound();
+        }
+        previousPlayerCount = currentPlayerCount;
         writePersistedRoom();
         updateUi();
     });
@@ -1078,6 +1320,12 @@ function bindRoom(room) {
         if (result.outcome === "win" && result.completionMs !== undefined) {
             finalCompletionMs = result.completionMs;
             showWinReveal(result);
+            if (latestState) {
+                const currentLevelNum = parseInt(latestState.level.id.replace(/\D/g, ""), 10);
+                if (currentLevelNum === 3 || currentLevelNum === 6 || currentLevelNum === 9 || currentLevelNum === 10) {
+                    void stopSoundtrack();
+                }
+            }
         }
         updateUi();
     });
@@ -1101,6 +1349,7 @@ function bindRoom(room) {
         obstacleTargets.clear();
         pendingDieAnimation = null;
         clearPersistedRoom();
+        void stopSoundtrack();
         updateUi();
         if (!isTransitioningRoom) {
             showMenu(hasEnteredGame ? "Disconnected from the room." : "");
@@ -1125,6 +1374,7 @@ async function quitToMenu() {
     myRoomId = "";
     obstacleTargets.clear();
     pendingDieAnimation = null;
+    void stopSoundtrack();
     updateUi();
     showMenu();
     isTransitioningRoom = false;
@@ -1134,6 +1384,7 @@ async function enterRoom(options) {
         isTransitioningRoom = true;
         showLoading(options.roomId || options.roomCode ? "Joining room..." : "Creating your room...");
         await leaveCurrentRoom();
+        await stopLobbySound();
         const reconnectPlayerId = options.reconnectPlayerId;
         latestResult = null;
         latestState = null;
@@ -1168,6 +1419,7 @@ async function enterRoom(options) {
                 visibility: currentVisibility
             });
             myRoomId = currentRoom.roomId;
+            playRoomCreatedSound();
         }
         bindRoom(currentRoom);
         showLoading("Loading the forest map...");
@@ -1251,6 +1503,7 @@ document.getElementById("closeJoinRoom").onclick = closeAllModals;
 document.getElementById("confirmCreateRoom").onclick = () => void createRoomFromModal();
 document.getElementById("refreshRooms").onclick = () => void fetchRoomList();
 document.getElementById("joinByCode").onclick = () => void joinPrivateRoomFromModal();
+lobbyStartGameEl.onclick = startGame;
 quitGameEl.onclick = () => void quitToMenu();
 visibilityPublicEl.onclick = () => setSelectedVisibility("public");
 visibilityPrivateEl.onclick = () => setSelectedVisibility("private");
