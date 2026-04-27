@@ -1072,7 +1072,7 @@ const gameServer = new Server({
 
 gameServer.define("wasd_room", WasdRoom);
 
-httpServer.listen(port, () => {
+httpServer.listen(port, "0.0.0.0", () => {
   // eslint-disable-next-line no-console
-  console.log(`WASD Colyseus server listening on :${port}`);
+  console.log(`WASD Colyseus server listening on 0.0.0.0:${port}`);
 });
