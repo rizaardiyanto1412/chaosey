@@ -1183,7 +1183,7 @@ app.get("/rooms/:roomCode", async (req, res) => {
 
 const httpServer = createServer(app);
 const gameServer = new Server({
-  transport: new WebSocketTransport({ server: httpServer })
+  transport: new WebSocketTransport({ server: httpServer, perMessageDeflate: false })
 });
 
 gameServer.define("wasd_room", WasdRoom);
