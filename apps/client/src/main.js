@@ -75,9 +75,13 @@ const explosionDieAnimKey = "explosion-die";
 const acornSheetKey = "bouncing-acorn-spritesheet";
 const blueSpiritEnemyKey = "blue-spirit-enemy";
 const tumbleweedKey = "tumbleweed";
+const snowballKey = "snowball";
+const fireballKey = "fireball";
 const coinLayerName = "coin";
 const hazardMarkerLayerPattern = /^hazard_(left|right|up|down|circle)(?:_|$)/;
 const tumbleweedMarkerLayerPattern = /^tumbleweed_(left|right|up|down|circle)(?:_|$)/;
+const snowballMarkerLayerPattern = /^snowball_(left|right|up|down|circle)(?:_|$)/;
+const fireballMarkerLayerPattern = /^fireball_(left|right|up|down|circle)(?:_|$)/;
 let game = null;
 let gameBootPromise = null;
 let gameBootResolve = null;
@@ -307,6 +311,8 @@ class MainScene extends Phaser.Scene {
     dieSprite;
     hazards = {};
     tumbleweeds = {};
+    snowballs = {};
+    fireballs = {};
     acorns = new Map();
     collectedAcornIds = new Set();
     goal;
@@ -400,6 +406,8 @@ class MainScene extends Phaser.Scene {
         });
         this.load.image(blueSpiritEnemyKey, "/assets/enemies/blue-spirit-hd-transparent.png");
         this.load.image(tumbleweedKey, "/assets/enemies/tumbleweed-hd-transparent.png");
+        this.load.image(snowballKey, "/assets/enemies/snowball-hd-transparent.png");
+        this.load.image(fireballKey, "/assets/enemies/fireball-hd-transparent.png");
     }
     create() {
         const tilemap = this.make.tilemap({ key: referenceMapKey(this.renderedLevelId) });
@@ -409,7 +417,7 @@ class MainScene extends Phaser.Scene {
             if (tileset) {
                 let depth = 0;
                 for (const layer of tilemap.layers) {
-                    if (layer.name === coinLayerName || hazardMarkerLayerPattern.test(layer.name.toLowerCase()) || tumbleweedMarkerLayerPattern.test(layer.name.toLowerCase())) {
+                    if (layer.name === coinLayerName || hazardMarkerLayerPattern.test(layer.name.toLowerCase()) || tumbleweedMarkerLayerPattern.test(layer.name.toLowerCase()) || snowballMarkerLayerPattern.test(layer.name.toLowerCase()) || fireballMarkerLayerPattern.test(layer.name.toLowerCase())) {
                         depth += 1;
                         continue;
                     }
@@ -584,6 +592,18 @@ class MainScene extends Phaser.Scene {
             this.tumbleweeds[id].destroy();
             delete this.tumbleweeds[id];
         }
+        for (const id of Object.keys(this.snowballs)) {
+            if (obstacleTargets.has(id))
+                continue;
+            this.snowballs[id].destroy();
+            delete this.snowballs[id];
+        }
+        for (const id of Object.keys(this.fireballs)) {
+            if (obstacleTargets.has(id))
+                continue;
+            this.fireballs[id].destroy();
+            delete this.fireballs[id];
+        }
         if (this.goal && ![...obstacleTargets.values()].some((obstacle) => obstacle.kind === "goal")) {
             this.goal.destroy();
             this.goal = undefined;
@@ -619,6 +639,28 @@ class MainScene extends Phaser.Scene {
                 this.tumbleweeds[id].setDisplaySize(visualSize, visualSize);
                 this.tumbleweeds[id].setPosition(Phaser.Math.Linear(this.tumbleweeds[id].x, obstacle.x, smoothFactor), Phaser.Math.Linear(this.tumbleweeds[id].y, obstacle.y, smoothFactor));
                 this.tumbleweeds[id].setAlpha(0.92 + Math.sin(_time * 0.008 + id.length) * 0.08);
+            }
+            else if (obstacle.kind === "snowball") {
+                if (!this.snowballs[id]) {
+                    this.snowballs[id] = this.add.sprite(obstacle.x, obstacle.y, snowballKey);
+                    this.snowballs[id].setDepth(175);
+                    this.snowballs[id].setOrigin(0.5);
+                }
+                const visualSize = Math.max(obstacle.width, obstacle.height) * 1.25;
+                this.snowballs[id].setDisplaySize(visualSize, visualSize);
+                this.snowballs[id].setPosition(Phaser.Math.Linear(this.snowballs[id].x, obstacle.x, smoothFactor), Phaser.Math.Linear(this.snowballs[id].y, obstacle.y, smoothFactor));
+                this.snowballs[id].setAlpha(0.92 + Math.sin(_time * 0.008 + id.length) * 0.08);
+            }
+            else if (obstacle.kind === "fireball") {
+                if (!this.fireballs[id]) {
+                    this.fireballs[id] = this.add.sprite(obstacle.x, obstacle.y, fireballKey);
+                    this.fireballs[id].setDepth(175);
+                    this.fireballs[id].setOrigin(0.5);
+                }
+                const visualSize = Math.max(obstacle.width, obstacle.height) * 1.25;
+                this.fireballs[id].setDisplaySize(visualSize, visualSize);
+                this.fireballs[id].setPosition(Phaser.Math.Linear(this.fireballs[id].x, obstacle.x, smoothFactor), Phaser.Math.Linear(this.fireballs[id].y, obstacle.y, smoothFactor));
+                this.fireballs[id].setAlpha(0.92 + Math.sin(_time * 0.008 + id.length) * 0.08);
             }
         }
     }

@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const { createCanvas, loadImage } = require('canvas');
 
 const FLIPPED_HORIZONTALLY_FLAG = 0x80000000;
@@ -124,6 +125,112 @@ function chooseColumns(tileCount, tileWidth, requestedColumns) {
   return Math.min(maxColumns, Math.max(1, squareishColumns));
 }
 
+function readPngChunks(buffer) {
+  const signature = '89504e470d0a1a0a';
+  if (buffer.subarray(0, 8).toString('hex') !== signature) {
+    throw new Error('Tilesheet must be a PNG image');
+  }
+
+  const chunks = [];
+  let offset = 8;
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.subarray(offset + 4, offset + 8).toString('ascii');
+    const data = buffer.subarray(offset + 8, offset + 8 + length);
+    chunks.push({ type, data });
+    offset += 12 + length;
+    if (type === 'IEND') break;
+  }
+
+  return chunks;
+}
+
+function paethPredictor(left, up, upLeft) {
+  const p = left + up - upLeft;
+  const pa = Math.abs(p - left);
+  const pb = Math.abs(p - up);
+  const pc = Math.abs(p - upLeft);
+  if (pa <= pb && pa <= pc) return left;
+  if (pb <= pc) return up;
+  return upLeft;
+}
+
+function decodePngRgba(filePath) {
+  const chunks = readPngChunks(fs.readFileSync(filePath));
+  const ihdr = chunks.find((chunk) => chunk.type === 'IHDR')?.data;
+  if (!ihdr) throw new Error('PNG is missing IHDR');
+
+  const width = ihdr.readUInt32BE(0);
+  const height = ihdr.readUInt32BE(4);
+  const bitDepth = ihdr[8];
+  const colorType = ihdr[9];
+  const compression = ihdr[10];
+  const filter = ihdr[11];
+  const interlace = ihdr[12];
+
+  if (bitDepth !== 8 || compression !== 0 || filter !== 0 || interlace !== 0) {
+    throw new Error('Only non-interlaced 8-bit PNG tilesheets are supported');
+  }
+  if (colorType !== 2 && colorType !== 6) {
+    throw new Error('Only RGB and RGBA PNG tilesheets are supported');
+  }
+
+  const channels = colorType === 6 ? 4 : 3;
+  const stride = width * channels;
+  const inflated = zlib.inflateSync(Buffer.concat(chunks.filter((chunk) => chunk.type === 'IDAT').map((chunk) => chunk.data)));
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  const previous = Buffer.alloc(stride);
+  const current = Buffer.alloc(stride);
+  let inputOffset = 0;
+
+  for (let y = 0; y < height; y += 1) {
+    const filterType = inflated[inputOffset];
+    inputOffset += 1;
+    inflated.copy(current, 0, inputOffset, inputOffset + stride);
+    inputOffset += stride;
+
+    for (let x = 0; x < stride; x += 1) {
+      const left = x >= channels ? current[x - channels] : 0;
+      const up = previous[x];
+      const upLeft = x >= channels ? previous[x - channels] : 0;
+      if (filterType === 1) current[x] = (current[x] + left) & 0xff;
+      else if (filterType === 2) current[x] = (current[x] + up) & 0xff;
+      else if (filterType === 3) current[x] = (current[x] + Math.floor((left + up) / 2)) & 0xff;
+      else if (filterType === 4) current[x] = (current[x] + paethPredictor(left, up, upLeft)) & 0xff;
+      else if (filterType !== 0) throw new Error(`Unsupported PNG filter: ${filterType}`);
+    }
+
+    for (let x = 0; x < width; x += 1) {
+      const sourceOffset = x * channels;
+      const targetOffset = (y * width + x) * 4;
+      rgba[targetOffset] = current[sourceOffset];
+      rgba[targetOffset + 1] = current[sourceOffset + 1];
+      rgba[targetOffset + 2] = current[sourceOffset + 2];
+      rgba[targetOffset + 3] = channels === 4 ? current[sourceOffset + 3] : 255;
+    }
+
+    current.copy(previous);
+  }
+
+  return { width, height, data: rgba };
+}
+
+async function loadTilesheet(filePath) {
+  try {
+    return { type: 'canvas', image: await loadImage(filePath) };
+  } catch (error) {
+    return { type: 'pixels', image: decodePngRgba(filePath) };
+  }
+}
+
+function copyTilePixels(source, target, sourceRect, targetRect) {
+  for (let y = 0; y < sourceRect.height; y += 1) {
+    const sourceOffset = ((sourceRect.y + y) * source.width + sourceRect.x) * 4;
+    const targetOffset = ((targetRect.y + y) * target.width + targetRect.x) * 4;
+    target.data.set(source.data.subarray(sourceOffset, sourceOffset + sourceRect.width * 4), targetOffset);
+  }
+}
+
 async function compact({ inputDir, outputDir, options }) {
   const inputMapPath = path.join(inputDir, options.mapFile);
   const inputImagePath = path.join(inputDir, options.imageFile);
@@ -147,13 +254,14 @@ async function compact({ inputDir, outputDir, options }) {
     throw new Error('Tileset must include tilewidth, tileheight, and columns');
   }
 
-  const source = await loadImage(inputImagePath);
+  const source = await loadTilesheet(inputImagePath);
   const columns = chooseColumns(usedGids.length, tileWidth, options.columns);
   const rows = Math.ceil(usedGids.length / columns);
   const outputWidth = columns * tileWidth;
   const outputHeight = rows * tileHeight;
   const canvas = createCanvas(outputWidth, outputHeight);
   const ctx = canvas.getContext('2d');
+  const outputImage = source.type === 'pixels' ? ctx.createImageData(outputWidth, outputHeight) : null;
   const gidMap = new Map();
 
   usedGids.forEach((oldGid, index) => {
@@ -162,9 +270,20 @@ async function compact({ inputDir, outputDir, options }) {
     const sy = Math.floor(oldTile / sourceColumns) * tileHeight + (tileset.margin ?? 0);
     const dx = (index % columns) * tileWidth;
     const dy = Math.floor(index / columns) * tileHeight;
-    ctx.drawImage(source, sx, sy, tileWidth, tileHeight, dx, dy, tileWidth, tileHeight);
+    if (source.type === 'pixels') {
+      copyTilePixels(
+        source.image,
+        outputImage,
+        { x: sx, y: sy, width: tileWidth, height: tileHeight },
+        { x: dx, y: dy }
+      );
+    } else {
+      ctx.drawImage(source.image, sx, sy, tileWidth, tileHeight, dx, dy, tileWidth, tileHeight);
+    }
     gidMap.set(oldGid, tileset.firstgid + index);
   });
+
+  if (outputImage) ctx.putImageData(outputImage, 0, 0);
 
   for (const layer of map.layers ?? []) {
     if (!Array.isArray(layer.data)) continue;
@@ -192,7 +311,7 @@ async function compact({ inputDir, outputDir, options }) {
   return {
     tileset: tileset.name,
     usedTiles: usedGids.length,
-    oldImage: `${source.width}x${source.height}`,
+    oldImage: `${source.image.width}x${source.image.height}`,
     newImage: `${outputWidth}x${outputHeight}`,
     columns,
     rows,

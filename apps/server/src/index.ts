@@ -77,7 +77,7 @@ interface TiledMap {
 }
 
 type HazardDirection = "left" | "right" | "up" | "down" | "circle";
-type ObstacleKind = "hazard" | "tumbleweed";
+type ObstacleKind = "hazard" | "tumbleweed" | "snowball" | "fireball";
 
 interface TileComponent {
   minCol: number;
@@ -384,6 +384,14 @@ function loadLevelFromTiledJson(filePath: string, levelId: string): LoadedMapLev
       .filter((layer) => layer.type === "tilelayer")
       .map((layer) => ({ direction: obstacleDirectionFromLayerName(layer, "tumbleweed"), layer }))
       .filter((entry): entry is { direction: HazardDirection; layer: TiledLayer } => entry.direction !== null);
+    const snowballLayers = tiled.layers
+      .filter((layer) => layer.type === "tilelayer")
+      .map((layer) => ({ direction: obstacleDirectionFromLayerName(layer, "snowball"), layer }))
+      .filter((entry): entry is { direction: HazardDirection; layer: TiledLayer } => entry.direction !== null);
+    const fireballLayers = tiled.layers
+      .filter((layer) => layer.type === "tilelayer")
+      .map((layer) => ({ direction: obstacleDirectionFromLayerName(layer, "fireball"), layer }))
+      .filter((entry): entry is { direction: HazardDirection; layer: TiledLayer } => entry.direction !== null);
     const firstFilledTile = (layer?: TiledLayer) => {
       const data = layer?.data;
       if (!data) return null;
@@ -434,6 +442,16 @@ function loadLevelFromTiledJson(filePath: string, levelId: string): LoadedMapLev
         obstacleFromComponent(component, direction, "tumbleweed", layer, tileW, tileH, layerIndex * 1000 + index)
       )
     );
+    const snowballs = snowballLayers.flatMap(({ direction, layer }, layerIndex) =>
+      filledTileComponents(layer, cols).map((component, index) =>
+        obstacleFromComponent(component, direction, "snowball", layer, tileW, tileH, layerIndex * 1000 + index)
+      )
+    );
+    const fireballs = fireballLayers.flatMap(({ direction, layer }, layerIndex) =>
+      filledTileComponents(layer, cols).map((component, index) =>
+        obstacleFromComponent(component, direction, "fireball", layer, tileW, tileH, layerIndex * 1000 + index)
+      )
+    );
 
     const level = {
       id: levelId,
@@ -450,7 +468,9 @@ function loadLevelFromTiledJson(filePath: string, levelId: string): LoadedMapLev
           size: { x: goalW, y: goalH }
         },
         ...hazards,
-        ...tumbleweeds
+        ...tumbleweeds,
+        ...snowballs,
+        ...fireballs
       ],
       collectibles
     };
@@ -865,7 +885,7 @@ class WasdRoom extends Room {
   private updateMovingObstacles() {
     const elapsedSeconds = this.tick / tickRate;
     for (const obstacle of this.level.obstacles) {
-      if ((obstacle.kind !== "hazard" && obstacle.kind !== "tumbleweed") || !obstacle.movement || !obstacle.origin) continue;
+      if ((obstacle.kind !== "hazard" && obstacle.kind !== "tumbleweed" && obstacle.kind !== "snowball" && obstacle.kind !== "fireball") || !obstacle.movement || !obstacle.origin) continue;
       if (obstacle.movement === "circular") {
         const angle = elapsedSeconds * (obstacle.speed ?? 2.2) + (obstacle.phase ?? 0);
         const radius = obstacle.amplitude ?? 192;
@@ -892,7 +912,7 @@ class WasdRoom extends Room {
 
   private resolveHazardCollision(): boolean {
     for (const obstacle of this.level.obstacles) {
-      if (obstacle.kind !== "hazard" && obstacle.kind !== "tumbleweed") continue;
+      if (obstacle.kind !== "hazard" && obstacle.kind !== "tumbleweed" && obstacle.kind !== "snowball" && obstacle.kind !== "fireball") continue;
       const hit = circlesIntersectsRect(this.teamPosition, this.level.playerRadius, obstacle.position, obstacle.size);
       if (!hit) continue;
       this.respawnAtSpawn();

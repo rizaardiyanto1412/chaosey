@@ -13,7 +13,7 @@ export interface Vector2 {
 
 export interface Obstacle {
   id: string;
-  kind: "hazard" | "tumbleweed" | "goal";
+  kind: "hazard" | "tumbleweed" | "snowball" | "fireball" | "goal";
   movement?: "horizontal" | "vertical" | "circular";
   origin?: Vector2;
   amplitude?: number;
