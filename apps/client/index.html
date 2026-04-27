@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Key Chaos</title>
+    <title>Chaeosey</title>
     <style>
       :root {
         color-scheme: light;
@@ -451,10 +451,11 @@
       }
 
       .lobby-card {
-        width: min(520px, 100%);
+        width: min(720px, 100%);
         border-radius: 28px;
-        padding: 28px;
+        padding: 32px;
         text-align: center;
+        pointer-events: auto;
       }
 
       .lobby-card h2 {
@@ -470,21 +471,49 @@
       }
 
       .lobby-badge-row {
-        display: flex;
-        justify-content: center;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin: 18px 0 14px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin: 22px 0 18px;
       }
 
       .lobby-badge {
-        padding: 10px 14px;
-        border-radius: 999px;
-        background: rgba(247, 211, 125, 0.14);
-        border: 1px solid rgba(247, 211, 125, 0.3);
+        display: grid;
+        gap: 6px;
+        padding: 18px 20px;
+        border-radius: 22px;
+        background:
+          linear-gradient(180deg, rgba(247, 211, 125, 0.18), rgba(247, 211, 125, 0.08)),
+          rgba(5, 18, 20, 0.72);
+        border: 1px solid rgba(247, 211, 125, 0.36);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
         color: #fff2cc;
-        font-size: 0.95rem;
-        font-weight: 700;
+      }
+
+      .lobby-badge-label {
+        font-size: 0.78rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #d8f5c4;
+      }
+
+      .lobby-badge-value {
+        font-size: clamp(2rem, 4vw, 3.2rem);
+        line-height: 1;
+        font-weight: 900;
+        color: #fff7e1;
+        text-shadow: 0 3px 14px rgba(0, 0, 0, 0.3);
+      }
+
+      .lobby-badge-note {
+        font-size: 0.9rem;
+        color: rgba(255, 242, 204, 0.82);
+      }
+
+      @media (max-width: 560px) {
+        .lobby-badge-row {
+          grid-template-columns: 1fr;
+        }
       }
 
       .lobby-footnote {
@@ -881,19 +910,20 @@
         <div class="menu-layout">
           <div class="brand">
             <div class="eyebrow">Fast chaotic co-op</div>
-            <h1>Key Chaos</h1>
-            <p>Key Chaos is a fast, chaotic online co-op game for 2-4 players where one tiny mistake can ruin the whole run.</p>
+            <h1>Chaeosey</h1>
+            <p>Chaeosey is a chaotic online co-op adventure for 2-4 players where every player assigned their own key to play the game.</p>
           </div>
 
           <div class="menu-card">
             <h2 class="menu-section-title">Enter The Forest</h2>
+            <div class="field">
+              <label for="playerName">Name</label>
+              <input id="playerName" placeholder="Your name" maxlength="24" autocomplete="nickname" />
+            </div>
             <div class="menu-actions">
               <button id="create" class="menu-button" type="button">Create Room</button>
               <button id="join" class="menu-button secondary" type="button">Join Room</button>
-              <button id="howToPlay" class="menu-button ghost" type="button">How To Play</button>
-              <button id="leaderboard" class="menu-button ghost" type="button">Leaderboard</button>
             </div>
-            <div class="hint">Create a public or private room, or jump into any public lobby that still has free slots.</div>
             <div class="menu-status" id="menuStatus"></div>
           </div>
         </div>
@@ -948,8 +978,19 @@
           <h2 id="lobbyOverlayTitle">Waiting For Host</h2>
           <p id="lobbyOverlayText">The host is choosing when to start. Stay ready for the run.</p>
           <div class="lobby-badge-row">
-            <div class="lobby-badge" id="lobbyOverlayPlayers">Players: 1/4</div>
-            <div class="lobby-badge" id="lobbyOverlayRoom">Room: ----</div>
+            <div class="lobby-badge" id="lobbyOverlayPlayers">
+              <span class="lobby-badge-label">Players</span>
+              <strong class="lobby-badge-value">1/4</strong>
+              <span class="lobby-badge-note">Need 2 to start</span>
+            </div>
+            <div class="lobby-badge" id="lobbyOverlayRoom">
+              <span class="lobby-badge-label">Room Code</span>
+              <strong class="lobby-badge-value">----</strong>
+              <span class="lobby-badge-note">Share this code</span>
+            </div>
+          </div>
+          <div class="modal-actions" id="lobbyOverlayActions" hidden>
+            <button id="lobbyStartGame" class="menu-button" type="button">Start the game</button>
           </div>
           <div class="lobby-footnote" id="lobbyOverlayFootnote">The game starts automatically for you as soon as the host presses start.</div>
         </div>

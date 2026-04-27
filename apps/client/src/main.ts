@@ -23,6 +23,7 @@ const latencyEl = document.getElementById("latency") as HTMLDivElement;
 const debugSoloEl = document.getElementById("debugSolo") as HTMLInputElement;
 const debugMoveSpeedEl = document.getElementById("debugMoveSpeed") as HTMLSelectElement;
 const debugLevelIdEl = document.getElementById("debugLevelId") as HTMLSelectElement;
+const playerNameEl = document.getElementById("playerName") as HTMLInputElement;
 const privateRoomCodeEl = document.getElementById("privateRoomCode") as HTMLInputElement;
 const menuScreenEl = document.getElementById("menuScreen") as HTMLElement;
 const loadingScreenEl = document.getElementById("loadingScreen") as HTMLElement;
@@ -32,6 +33,8 @@ const lobbyOverlayTitleEl = document.getElementById("lobbyOverlayTitle") as HTML
 const lobbyOverlayTextEl = document.getElementById("lobbyOverlayText") as HTMLParagraphElement;
 const lobbyOverlayPlayersEl = document.getElementById("lobbyOverlayPlayers") as HTMLDivElement;
 const lobbyOverlayRoomEl = document.getElementById("lobbyOverlayRoom") as HTMLDivElement;
+const lobbyOverlayActionsEl = document.getElementById("lobbyOverlayActions") as HTMLDivElement;
+const lobbyStartGameEl = document.getElementById("lobbyStartGame") as HTMLButtonElement;
 const lobbyOverlayFootnoteEl = document.getElementById("lobbyOverlayFootnote") as HTMLDivElement;
 const howToModalEl = document.getElementById("howToModal") as HTMLElement;
 const createRoomModalEl = document.getElementById("createRoomModal") as HTMLElement;
@@ -62,6 +65,7 @@ const touchButtons = document.querySelectorAll<HTMLButtonElement>("[data-role]")
 const persistedRoomKey = "key-chaos.active-room";
 const defaultMoveSpeed = 160;
 const selectedLevelId = import.meta.env.VITE_LEVEL_ID ?? DEFAULT_LEVEL_ID;
+const isDebugCreatePath = window.location.pathname === "/debugxthing";
 
 let currentRoom: Room | null = null;
 let latestState: GameState | null = null;
@@ -239,6 +243,11 @@ function selectedDebugMoveSpeed(): number | undefined {
 
 function selectedDebugLevelId(): string | undefined {
   return debugSoloEl.checked ? debugLevelIdEl.value : undefined;
+}
+
+function selectedPlayerName(): string | undefined {
+  const playerName = playerNameEl.value.trim();
+  return playerName.length > 0 ? playerName : undefined;
 }
 
 function send(type: string, payload?: unknown) {
@@ -921,20 +930,40 @@ function updateLobbyOverlay() {
   }
 
   const isHost = latestState.hostId === myPlayerId;
-  const shouldShow = latestState.roomState === "lobby" && !isHost;
+  const shouldShow = latestState.roomState === "lobby";
   setVisibility(lobbyOverlayEl, shouldShow);
   if (!shouldShow) return;
 
   const playerCount = latestState.players.length;
-  lobbyOverlayTitleEl.textContent = "Waiting For Host";
-  lobbyOverlayTextEl.textContent =
-    playerCount > 1
+  const canStart = currentDebugSolo ? playerCount >= 1 : playerCount >= 2;
+  const neededPlayers = currentDebugSolo ? 1 : 2;
+  lobbyOverlayTitleEl.textContent = isHost ? "Waiting For Players" : "Waiting For Host";
+  lobbyOverlayTextEl.textContent = isHost
+    ? playerCount > 1
+      ? "Everyone is in position. Start the run whenever you are ready."
+      : "Room created. Share the room code and wait for at least one more player."
+    : playerCount > 1
       ? "Everyone is in position. The host can start the run whenever they are ready."
       : "You joined successfully. Waiting for the host and more players before the run begins.";
-  lobbyOverlayPlayersEl.textContent = `Players: ${playerCount}/4`;
-  lobbyOverlayRoomEl.textContent = `Room: ${latestState.roomCode}`;
-  lobbyOverlayFootnoteEl.textContent =
-    playerCount > 1
+  lobbyOverlayPlayersEl.innerHTML = `
+    <span class="lobby-badge-label">Players</span>
+    <strong class="lobby-badge-value">${playerCount}/4</strong>
+    <span class="lobby-badge-note">${canStart ? "Ready to start" : `Need ${neededPlayers} to start`}</span>
+  `;
+  lobbyOverlayRoomEl.innerHTML = `
+    <span class="lobby-badge-label">Room Code</span>
+    <strong class="lobby-badge-value">${latestState.roomCode}</strong>
+    <span class="lobby-badge-note">Share this code</span>
+  `;
+  setVisibility(lobbyOverlayActionsEl, isHost);
+  lobbyStartGameEl.disabled = !canStart;
+  lobbyStartGameEl.style.opacity = canStart ? "1" : "0.55";
+  lobbyStartGameEl.title = canStart ? "Start the run" : "Need at least 2 players to start.";
+  lobbyOverlayFootnoteEl.textContent = isHost
+    ? canStart
+      ? "Press start when everyone is ready."
+      : "You need at least one more player before the game can start."
+    : playerCount > 1
       ? "You do not need to do anything here. The game will begin for you as soon as the host presses start."
       : "The host needs at least one more player before the game can start.";
 }
@@ -943,7 +972,7 @@ function syncLobbyControls() {
   if (!latestState || !roomCode) return;
   const isHost = latestState.hostId === myPlayerId;
   const shouldOpenHostRoomPanel = isHost && latestState.roomState === "lobby" && !hostStartPending;
-  if (shouldOpenHostRoomPanel && createRoomModalEl.hidden) {
+  if (isDebugCreatePath && shouldOpenHostRoomPanel && createRoomModalEl.hidden) {
     openModal(createRoomModalEl);
   }
 }
@@ -1251,10 +1280,11 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
     myPlayerId = "";
     roomCode = "";
     latency = 0;
-    currentDebugSolo = Boolean(debugSoloEl.checked) && !options.roomId && !options.roomCode;
+    const playerName = selectedPlayerName();
+    currentDebugSolo = isDebugCreatePath && Boolean(debugSoloEl.checked) && !options.roomId && !options.roomCode;
 
     if (options.roomId) {
-      currentRoom = await colyseus.joinById(options.roomId, { reconnectPlayerId });
+      currentRoom = await colyseus.joinById(options.roomId, { reconnectPlayerId, playerName });
       currentVisibility = "public";
       myRoomId = options.roomId;
     } else if (options.roomCode) {
@@ -1263,15 +1293,16 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
         throw new Error("Room not found.");
       }
       const lookup = (await lookupRes.json()) as { roomId: string };
-      currentRoom = await colyseus.joinById(lookup.roomId, { reconnectPlayerId });
+      currentRoom = await colyseus.joinById(lookup.roomId, { reconnectPlayerId, playerName });
       currentVisibility = "private";
       myRoomId = lookup.roomId;
     } else {
       currentVisibility = options.visibility ?? "public";
       currentRoom = await colyseus.create("wasd_room", {
-        debugSolo: Boolean(debugSoloEl.checked),
-        debugMoveSpeed: selectedDebugMoveSpeed(),
-        debugLevelId: selectedDebugLevelId(),
+        debugSolo: currentDebugSolo,
+        debugMoveSpeed: isDebugCreatePath ? selectedDebugMoveSpeed() : undefined,
+        debugLevelId: isDebugCreatePath ? selectedDebugLevelId() : undefined,
+        playerName,
         visibility: currentVisibility
       });
       myRoomId = currentRoom.roomId;
@@ -1284,7 +1315,7 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
     showHud();
     updateUi();
 
-    if (!options.roomId && !options.roomCode) {
+    if (isDebugCreatePath && !options.roomId && !options.roomCode) {
       updateCreateRoomSummary();
       createRoomStatusEl.textContent = "";
       openModal(createRoomModalEl);
@@ -1298,6 +1329,10 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
 }
 
 function openCreateRoomModal() {
+  if (!isDebugCreatePath) {
+    void enterRoom({ visibility: "public" });
+    return;
+  }
   createRoomStatusEl.textContent = "";
   setSelectedVisibility("public");
   confirmCreateRoomEl.textContent = "Create Room";
@@ -1353,15 +1388,16 @@ async function resumePersistedRoom() {
 
 (document.getElementById("create") as HTMLButtonElement).onclick = openCreateRoomModal;
 (document.getElementById("join") as HTMLButtonElement).onclick = openJoinRoomModal;
-(document.getElementById("howToPlay") as HTMLButtonElement).onclick = () => openModal(howToModalEl);
-(document.getElementById("closeHowTo") as HTMLButtonElement).onclick = closeAllModals;
-(document.getElementById("leaderboard") as HTMLButtonElement).onclick = openLeaderboardModal;
-(document.getElementById("closeLeaderboard") as HTMLButtonElement).onclick = closeAllModals;
+document.getElementById("howToPlay")?.addEventListener("click", () => openModal(howToModalEl));
+document.getElementById("closeHowTo")?.addEventListener("click", closeAllModals);
+document.getElementById("leaderboard")?.addEventListener("click", openLeaderboardModal);
+document.getElementById("closeLeaderboard")?.addEventListener("click", closeAllModals);
 (document.getElementById("closeCreateRoom") as HTMLButtonElement).onclick = () => void quitToMenu();
 (document.getElementById("closeJoinRoom") as HTMLButtonElement).onclick = closeAllModals;
 (document.getElementById("confirmCreateRoom") as HTMLButtonElement).onclick = () => void createRoomFromModal();
 (document.getElementById("refreshRooms") as HTMLButtonElement).onclick = () => void fetchRoomList();
 (document.getElementById("joinByCode") as HTMLButtonElement).onclick = () => void joinPrivateRoomFromModal();
+lobbyStartGameEl.onclick = startGame;
 quitGameEl.onclick = () => void quitToMenu();
 
 visibilityPublicEl.onclick = () => setSelectedVisibility("public");

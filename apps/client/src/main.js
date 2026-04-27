@@ -13,6 +13,7 @@ const latencyEl = document.getElementById("latency");
 const debugSoloEl = document.getElementById("debugSolo");
 const debugMoveSpeedEl = document.getElementById("debugMoveSpeed");
 const debugLevelIdEl = document.getElementById("debugLevelId");
+const playerNameEl = document.getElementById("playerName");
 const privateRoomCodeEl = document.getElementById("privateRoomCode");
 const menuScreenEl = document.getElementById("menuScreen");
 const loadingScreenEl = document.getElementById("loadingScreen");
@@ -51,6 +52,7 @@ const touchButtons = document.querySelectorAll("[data-role]");
 const persistedRoomKey = "key-chaos.active-room";
 const defaultMoveSpeed = 160;
 const selectedLevelId = import.meta.env.VITE_LEVEL_ID ?? DEFAULT_LEVEL_ID;
+const isDebugCreatePath = window.location.pathname === "/debugxthing";
 let currentRoom = null;
 let latestState = null;
 let latestResult = null;
@@ -196,6 +198,10 @@ function selectedDebugMoveSpeed() {
 }
 function selectedDebugLevelId() {
     return debugSoloEl.checked ? debugLevelIdEl.value : undefined;
+}
+function selectedPlayerName() {
+    const playerName = playerNameEl.value.trim();
+    return playerName.length > 0 ? playerName : undefined;
 }
 function send(type, payload) {
     if (!currentRoom)
@@ -853,7 +859,7 @@ function syncLobbyControls() {
         return;
     const isHost = latestState.hostId === myPlayerId;
     const shouldOpenHostRoomPanel = isHost && latestState.roomState === "lobby" && !hostStartPending;
-    if (shouldOpenHostRoomPanel && createRoomModalEl.hidden) {
+    if (isDebugCreatePath && shouldOpenHostRoomPanel && createRoomModalEl.hidden) {
         openModal(createRoomModalEl);
     }
 }
@@ -1135,9 +1141,10 @@ async function enterRoom(options) {
         myPlayerId = "";
         roomCode = "";
         latency = 0;
-        currentDebugSolo = Boolean(debugSoloEl.checked) && !options.roomId && !options.roomCode;
+        const playerName = selectedPlayerName();
+        currentDebugSolo = isDebugCreatePath && Boolean(debugSoloEl.checked) && !options.roomId && !options.roomCode;
         if (options.roomId) {
-            currentRoom = await colyseus.joinById(options.roomId, { reconnectPlayerId });
+            currentRoom = await colyseus.joinById(options.roomId, { reconnectPlayerId, playerName });
             currentVisibility = "public";
             myRoomId = options.roomId;
         }
@@ -1147,16 +1154,17 @@ async function enterRoom(options) {
                 throw new Error("Room not found.");
             }
             const lookup = (await lookupRes.json());
-            currentRoom = await colyseus.joinById(lookup.roomId, { reconnectPlayerId });
+            currentRoom = await colyseus.joinById(lookup.roomId, { reconnectPlayerId, playerName });
             currentVisibility = "private";
             myRoomId = lookup.roomId;
         }
         else {
             currentVisibility = options.visibility ?? "public";
             currentRoom = await colyseus.create("wasd_room", {
-                debugSolo: Boolean(debugSoloEl.checked),
-                debugMoveSpeed: selectedDebugMoveSpeed(),
-                debugLevelId: selectedDebugLevelId(),
+                debugSolo: currentDebugSolo,
+                debugMoveSpeed: isDebugCreatePath ? selectedDebugMoveSpeed() : undefined,
+                debugLevelId: isDebugCreatePath ? selectedDebugLevelId() : undefined,
+                playerName,
                 visibility: currentVisibility
             });
             myRoomId = currentRoom.roomId;
@@ -1167,7 +1175,7 @@ async function enterRoom(options) {
         resizeGame();
         showHud();
         updateUi();
-        if (!options.roomId && !options.roomCode) {
+        if (isDebugCreatePath && !options.roomId && !options.roomCode) {
             updateCreateRoomSummary();
             createRoomStatusEl.textContent = "";
             openModal(createRoomModalEl);
@@ -1182,6 +1190,10 @@ async function enterRoom(options) {
     }
 }
 function openCreateRoomModal() {
+    if (!isDebugCreatePath) {
+        void enterRoom({ visibility: "public" });
+        return;
+    }
     createRoomStatusEl.textContent = "";
     setSelectedVisibility("public");
     confirmCreateRoomEl.textContent = "Create Room";
@@ -1230,10 +1242,10 @@ async function resumePersistedRoom() {
 }
 document.getElementById("create").onclick = openCreateRoomModal;
 document.getElementById("join").onclick = openJoinRoomModal;
-document.getElementById("howToPlay").onclick = () => openModal(howToModalEl);
-document.getElementById("closeHowTo").onclick = closeAllModals;
-document.getElementById("leaderboard").onclick = openLeaderboardModal;
-document.getElementById("closeLeaderboard").onclick = closeAllModals;
+document.getElementById("howToPlay")?.addEventListener("click", () => openModal(howToModalEl));
+document.getElementById("closeHowTo")?.addEventListener("click", closeAllModals);
+document.getElementById("leaderboard")?.addEventListener("click", openLeaderboardModal);
+document.getElementById("closeLeaderboard")?.addEventListener("click", closeAllModals);
 document.getElementById("closeCreateRoom").onclick = () => void quitToMenu();
 document.getElementById("closeJoinRoom").onclick = closeAllModals;
 document.getElementById("confirmCreateRoom").onclick = () => void createRoomFromModal();
