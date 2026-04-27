@@ -1028,10 +1028,10 @@ class WasdRoom extends Room {
 
 const app = express();
 app.use(cors({ origin: clientOrigin }));
-app.get("/health", (_req, res) => res.json({ ok: true }));
-app.get("/rooms", async (_req, res) => {
+
+async function currentRoomSummaries(): Promise<LobbyRoomSummary[]> {
   const rooms = await matchMaker.query({ name: "wasd_room" });
-  const summaries: LobbyRoomSummary[] = rooms
+  return rooms
     .map((room) => {
       const metadata = room.metadata as Partial<RoomMetadata> | undefined;
       const visibility: RoomVisibility = metadata?.visibility === "private" ? "private" : "public";
@@ -1049,10 +1049,126 @@ app.get("/rooms", async (_req, res) => {
       };
     })
     .filter((room) => room.visibility === "public" && room.roomCode.length > 0 && room.playerCount < room.maxClients);
-  res.json({ rooms: summaries });
+}
+
+function dashboardHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chaosey Server Dashboard</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #090b12; color: #eef2ff; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top left, #23305f 0, transparent 34rem), #090b12; }
+    main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 24px; }
+    h1 { margin: 0; font-size: clamp(30px, 5vw, 56px); letter-spacing: -0.06em; }
+    h2 { margin: 0 0 16px; font-size: 18px; color: #c7d2fe; }
+    .muted { color: #94a3b8; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+    .card { border: 1px solid rgba(148, 163, 184, 0.22); border-radius: 24px; padding: 20px; background: rgba(15, 23, 42, 0.78); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24); }
+    .metric { font-size: 34px; font-weight: 800; letter-spacing: -0.05em; }
+    .status { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 8px 12px; background: rgba(34, 197, 94, 0.14); color: #86efac; font-weight: 700; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 20px #22c55e; }
+    table { width: 100%; border-collapse: collapse; overflow: hidden; }
+    th, td { padding: 12px; border-bottom: 1px solid rgba(148, 163, 184, 0.16); text-align: left; }
+    th { color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; }
+    .stack { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; }
+    .pill { display: inline-flex; padding: 4px 10px; border-radius: 999px; background: rgba(99, 102, 241, 0.18); color: #c4b5fd; font-size: 12px; font-weight: 700; }
+    @media (max-width: 860px) { .grid, .stack { grid-template-columns: 1fr; } header { display: block; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Chaosey Server</h1>
+        <p class="muted">Live status, rooms, players, and leaderboard.</p>
+      </div>
+      <div class="status"><span class="dot"></span><span id="statusText">Checking</span></div>
+    </header>
+    <section class="grid">
+      <div class="card"><div class="muted">Rooms</div><div class="metric" id="roomCount">0</div></div>
+      <div class="card"><div class="muted">Players</div><div class="metric" id="playerCount">0</div></div>
+      <div class="card"><div class="muted">Leaderboard</div><div class="metric" id="leaderboardCount">0</div></div>
+      <div class="card"><div class="muted">Uptime</div><div class="metric" id="uptime">0s</div></div>
+    </section>
+    <section class="stack">
+      <div class="card">
+        <h2>Rooms</h2>
+        <table>
+          <thead><tr><th>Code</th><th>State</th><th>Players</th><th>Room ID</th></tr></thead>
+          <tbody id="roomsBody"><tr><td colspan="4" class="muted">No rooms</td></tr></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>Leaderboard</h2>
+        <table>
+          <thead><tr><th>Time</th><th>Players</th><th>Room</th></tr></thead>
+          <tbody id="leaderboardBody"><tr><td colspan="3" class="muted">No entries</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <p class="muted">Last updated: <span id="updatedAt">never</span>. Refreshes every 5 seconds.</p>
+  </main>
+  <script>
+    const fmtUptime = (seconds) => {
+      const s = Math.floor(seconds % 60);
+      const m = Math.floor(seconds / 60 % 60);
+      const h = Math.floor(seconds / 3600);
+      return h > 0 ? h + "h " + m + "m" : m > 0 ? m + "m " + s + "s" : s + "s";
+    };
+    const fmtTime = (ms) => {
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const centis = Math.floor((ms % 1000) / 10);
+      return String(minutes).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0") + "." + String(centis).padStart(2, "0");
+    };
+    async function refresh() {
+      const response = await fetch("/dashboard/status", { cache: "no-store" });
+      const data = await response.json();
+      document.getElementById("statusText").textContent = data.ok ? "Online" : "Offline";
+      document.getElementById("roomCount").textContent = data.roomCount;
+      document.getElementById("playerCount").textContent = data.playerCount;
+      document.getElementById("leaderboardCount").textContent = data.leaderboard.length;
+      document.getElementById("uptime").textContent = fmtUptime(data.uptimeSeconds);
+      document.getElementById("updatedAt").textContent = new Date(data.serverTime).toLocaleString();
+      document.getElementById("roomsBody").innerHTML = data.rooms.length === 0
+        ? '<tr><td colspan="4" class="muted">No rooms</td></tr>'
+        : data.rooms.map((room) => '<tr><td><span class="pill">' + room.roomCode + '</span></td><td>' + room.roomState + '</td><td>' + room.playerCount + '/' + room.maxClients + '</td><td class="muted">' + room.roomId + '</td></tr>').join("");
+      document.getElementById("leaderboardBody").innerHTML = data.leaderboard.length === 0
+        ? '<tr><td colspan="3" class="muted">No entries</td></tr>'
+        : data.leaderboard.map((entry) => '<tr><td>' + fmtTime(entry.completionMs) + '</td><td>' + entry.playerCount + '</td><td><span class="pill">' + entry.roomCode + '</span></td></tr>').join("");
+    }
+    refresh().catch(() => { document.getElementById("statusText").textContent = "Error"; });
+    setInterval(() => refresh().catch(() => { document.getElementById("statusText").textContent = "Error"; }), 5000);
+  </script>
+</body>
+</html>`;
+}
+
+app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/rooms", async (_req, res) => {
+  res.json({ rooms: await currentRoomSummaries() });
 });
 app.get("/leaderboard", (_req, res) => {
   res.json({ entries: leaderboard });
+});
+app.get("/dashboard", (_req, res) => {
+  res.type("html").send(dashboardHtml());
+});
+app.get("/dashboard/status", async (_req, res) => {
+  const rooms = await currentRoomSummaries();
+  res.json({
+    ok: true,
+    serverTime: new Date().toISOString(),
+    uptimeSeconds: process.uptime(),
+    roomCount: rooms.length,
+    playerCount: rooms.reduce((total, room) => total + room.playerCount, 0),
+    rooms,
+    leaderboard
+  });
 });
 app.get("/rooms/:roomCode", async (req, res) => {
   const roomCode = String(req.params.roomCode ?? "").toUpperCase();
