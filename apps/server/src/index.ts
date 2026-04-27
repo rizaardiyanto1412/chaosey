@@ -1,12 +1,11 @@
 import "dotenv/config";
 import cors from "cors";
-import express from "express";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { createServer } from "node:http";
 import path from "node:path";
 import { Room, ServerError, matchMaker } from "@colyseus/core";
 import { Server } from "colyseus";
-import { WebSocketTransport } from "@colyseus/ws-transport";
+import { uWebSocketsTransport } from "@colyseus/uwebsockets-transport";
+import expressify from "uwebsockets-express";
 import { z } from "zod";
 import {
   DEFAULT_LEVEL,
@@ -1047,7 +1046,8 @@ class WasdRoom extends Room {
   }
 }
 
-const app = express();
+const transport = new uWebSocketsTransport({});
+const app = expressify(transport.app);
 app.use(cors({ origin: clientOrigin }));
 
 async function currentRoomSummaries(): Promise<LobbyRoomSummary[]> {
@@ -1202,14 +1202,11 @@ app.get("/rooms/:roomCode", async (req, res) => {
   res.json({ roomId: matched.roomId, roomCode });
 });
 
-const httpServer = createServer(app);
-const gameServer = new Server({
-  transport: new WebSocketTransport({ server: httpServer, perMessageDeflate: false })
-});
+const gameServer = new Server({ transport });
 
 gameServer.define("wasd_room", WasdRoom);
 
-httpServer.listen(port, "0.0.0.0", () => {
+gameServer.listen(port, undefined, undefined, () => {
   // eslint-disable-next-line no-console
   console.log(`WASD Colyseus server listening on 0.0.0.0:${port}`);
 });

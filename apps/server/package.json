@@ -11,12 +11,12 @@
   },
   "dependencies": {
     "@colyseus/core": "0.16.5",
-    "@colyseus/ws-transport": "0.16.5",
+    "@colyseus/uwebsockets-transport": "0.16.10",
     "@wasd/shared": "0.1.0",
     "colyseus": "0.16.5",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
-    "express": "^5.1.0",
+    "uwebsockets-express": "^1.4.2",
     "zod": "^4.1.12"
   },
   "devDependencies": {
