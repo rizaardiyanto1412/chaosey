@@ -88,6 +88,7 @@ let currentDebugSolo = false;
 let myRoomId = "";
 let availableRooms: LobbyRoomSummary[] = [];
 let previousPlayerCount = 0;
+const localPressedRoles = new Set<PlayerRole>();
 
 let targetTeamPosition = { x: 100, y: 100 };
 const obstacleTargets = new Map<
@@ -610,13 +611,26 @@ function handlePress(key: string) {
   unlockAudio();
   const role = mapKeyToRole(key);
   if (!role || !myRoles.includes(role)) return;
+  localPressedRoles.add(role);
   send("input_press", { role });
 }
 
 function handleRelease(key: string) {
   const role = mapKeyToRole(key);
   if (!role || !myRoles.includes(role)) return;
+  localPressedRoles.delete(role);
   send("input_release", { role });
+}
+
+function clearLocalPrediction() {
+  localPressedRoles.clear();
+}
+
+function predictedDirection() {
+  return {
+    x: (localPressedRoles.has("D") ? 1 : 0) - (localPressedRoles.has("A") ? 1 : 0),
+    y: (localPressedRoles.has("S") ? 1 : 0) - (localPressedRoles.has("W") ? 1 : 0)
+  };
 }
 
 function formatTime(ms: number): string {
@@ -950,7 +964,9 @@ class MainScene extends Phaser.Scene {
       pendingDieAnimation = null;
     }
 
-    const smoothFactor = Math.min(1, (delta / 1000) * 14);
+    this.applyLocalPrediction(delta);
+
+    const smoothFactor = Math.min(1, (delta / 1000) * 18);
     const nextX = Phaser.Math.Linear(this.playerSprite.x, targetTeamPosition.x, smoothFactor);
     const nextY = Phaser.Math.Linear(this.playerSprite.y, targetTeamPosition.y, smoothFactor);
     const dx = nextX - this.playerSprite.x;
@@ -1090,6 +1106,29 @@ class MainScene extends Phaser.Scene {
         this.fireballs[id].setAlpha(0.92 + Math.sin(_time * 0.008 + id.length) * 0.08);
       }
     }
+  }
+
+  private applyLocalPrediction(delta: number) {
+    if (!latestState || latestState.roomState !== "playing" || localPressedRoles.size === 0) return;
+    const direction = predictedDirection();
+    if (direction.x === 0 && direction.y === 0) return;
+
+    const dt = delta / 1000;
+    const length = Math.hypot(direction.x, direction.y) || 1;
+    const speed = latestState.level.moveSpeed;
+    const radius = latestState.level.playerRadius;
+    targetTeamPosition = {
+      x: Phaser.Math.Clamp(
+        targetTeamPosition.x + (direction.x / length) * speed * dt,
+        radius,
+        latestState.level.width - radius
+      ),
+      y: Phaser.Math.Clamp(
+        targetTeamPosition.y + (direction.y / length) * speed * dt,
+        radius,
+        latestState.level.height - radius
+      )
+    };
   }
 
   private syncCollectedAcorns() {
@@ -1585,6 +1624,8 @@ function bindRoom(room: Room) {
     }
     if (state.roomState !== "lobby") {
       hostStartPending = false;
+    } else {
+      clearLocalPrediction();
     }
     roomCode = state.roomCode;
     hydrateMyRolesFromPlayers(state.players);
@@ -1665,6 +1706,7 @@ function bindRoom(room: Room) {
     myPlayerId = "";
     roomCode = "";
     myRoomId = "";
+    clearLocalPrediction();
     resetConnectionStats();
     hostStartPending = false;
     obstacleTargets.clear();
@@ -1695,6 +1737,7 @@ async function quitToMenu() {
   myPlayerId = "";
   roomCode = "";
   myRoomId = "";
+  clearLocalPrediction();
   obstacleTargets.clear();
   pendingDieAnimation = null;
   void stopSoundtrack();
@@ -1716,6 +1759,7 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
     myRoles = [];
     myPlayerId = "";
     roomCode = "";
+    clearLocalPrediction();
     resetConnectionStats();
     const playerName = selectedPlayerName();
     currentDebugSolo = isDebugCreatePath && Boolean(debugSoloEl.checked) && !options.roomId && !options.roomCode;

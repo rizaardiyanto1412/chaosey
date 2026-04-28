@@ -694,6 +694,15 @@
         display: none;
       }
 
+      .hud-connection {
+        top: 18px;
+        right: 22px;
+        padding: 0;
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+      }
+
       .roster-row {
         display: flex;
         align-items: center;
@@ -1072,6 +1081,11 @@
           transform: none;
           min-width: 150px;
         }
+
+        .hud-connection {
+          top: 82px;
+          right: 16px;
+        }
       }
 
       @media (max-width: 640px) {
@@ -1174,7 +1188,6 @@
           <h2 id="role">Role: -</h2>
           <div class="hud-meta" id="room">Room: -</div>
           <div class="hud-copy" id="state">State: -</div>
-          <div class="connection-indicator is-checking" id="latency">RTT: checking</div>
           <div class="meta-list" id="players">Players: -</div>
         </div>
 
@@ -1202,6 +1215,10 @@
         </div>
 
         <div class="hud-panel hud-roster" id="hudRoster" hidden></div>
+
+        <div class="hud-panel hud-connection">
+          <div class="connection-indicator is-checking" id="latency">RTT: checking</div>
+        </div>
 
         <div class="hud-panel hud-bottom-left">
           <button id="hudSoundToggle" class="sound-toggle" type="button" aria-label="Toggle soundtrack" title="Mute music">
