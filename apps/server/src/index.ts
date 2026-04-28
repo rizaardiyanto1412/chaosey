@@ -1,5 +1,6 @@
 import "dotenv/config";
 import cors from "cors";
+import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { Room, ServerError, matchMaker } from "@colyseus/core";
@@ -635,7 +636,7 @@ class WasdRoom extends Room {
       throw new ServerError(400, "Room is full.");
     }
 
-    const playerId = crypto.randomUUID();
+    const playerId = randomUUID();
     const newPlayer: RoomPlayer = {
       playerId,
       sessionId: client.sessionId,

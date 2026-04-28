@@ -10,4 +10,8 @@ describe("mapKeyToRole", () => {
   test("rejects non role keys", () => {
     expect(mapKeyToRole("Q")).toBeNull();
   });
+
+  test("rejects missing keys", () => {
+    expect(mapKeyToRole(undefined)).toBeNull();
+  });
 });
