@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@colyseus/core": "0.16.5",
+    "@colyseus/core": "0.16.24",
     "@colyseus/uwebsockets-transport": "0.16.10",
     "@wasd/shared": "0.1.0",
     "colyseus": "0.16.5",
