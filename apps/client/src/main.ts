@@ -81,6 +81,8 @@ let myRoles: PlayerRole[] = [];
 let myPlayerId = "";
 let roomCode = "";
 let latency = 0;
+let lastPingSentAt = 0;
+let lastPongAt = 0;
 let currentVisibility: RoomVisibility = "public";
 let currentDebugSolo = false;
 let myRoomId = "";
@@ -276,6 +278,12 @@ function selectedPlayerName(): string | undefined {
 function send(type: string, payload?: unknown) {
   if (!currentRoom) return;
   currentRoom.send(type, payload);
+}
+
+function resetConnectionStats() {
+  latency = 0;
+  lastPingSentAt = 0;
+  lastPongAt = 0;
 }
 
 function getAudioContext(): AudioContext | null {
@@ -1325,7 +1333,7 @@ function updateUi() {
   roleEl.textContent = `Role: ${myRoles.length ? myRoles.join(" + ") : "-"}`;
   roomEl.textContent = `Room: ${roomCode || "-"}`;
   stateEl.textContent = `State: ${latestState?.roomState ?? "-"}`;
-  latencyEl.textContent = `RTT: ${Math.round(latency)} ms`;
+  updateConnectionIndicator();
 
   if (!latestState) {
     playersEl.textContent = "Players: -";
@@ -1342,6 +1350,34 @@ function updateUi() {
   syncLobbyControls();
   updateScoreDisplay();
   renderRoster();
+}
+
+function updateConnectionIndicator() {
+  let status = "checking";
+  let label = "RTT: checking";
+
+  if (!currentRoom) {
+    status = "lost";
+    label = "RTT: offline";
+  } else if (lastPongAt > 0) {
+    const pongAge = Date.now() - lastPongAt;
+    if (pongAge > 5000) {
+      status = "lost";
+      label = "RTT: lost";
+    } else if (latency < 120) {
+      status = "good";
+      label = `RTT: ${Math.round(latency)} ms`;
+    } else if (latency < 250) {
+      status = "fair";
+      label = `RTT: ${Math.round(latency)} ms`;
+    } else {
+      status = "slow";
+      label = `RTT: ${Math.round(latency)} ms`;
+    }
+  }
+
+  latencyEl.textContent = label;
+  latencyEl.className = `connection-indicator is-${status}`;
 }
 
 function hydrateMyRolesFromPlayers(players: GameState["players"]) {
@@ -1616,6 +1652,7 @@ function bindRoom(room: Room) {
 
   room.onMessage("pong", ({ sentAt }: { sentAt: number }) => {
     latency = Date.now() - sentAt;
+    lastPongAt = Date.now();
     updateUi();
   });
 
@@ -1628,6 +1665,7 @@ function bindRoom(room: Room) {
     myPlayerId = "";
     roomCode = "";
     myRoomId = "";
+    resetConnectionStats();
     hostStartPending = false;
     obstacleTargets.clear();
     pendingDieAnimation = null;
@@ -1678,7 +1716,7 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
     myRoles = [];
     myPlayerId = "";
     roomCode = "";
-    latency = 0;
+    resetConnectionStats();
     const playerName = selectedPlayerName();
     currentDebugSolo = isDebugCreatePath && Boolean(debugSoloEl.checked) && !options.roomId && !options.roomCode;
 
@@ -1806,7 +1844,13 @@ debugSoloEl.onchange = updateDebugSpeedControl;
 
 setInterval(() => {
   const sentAt = Date.now();
+  if (!currentRoom) {
+    updateConnectionIndicator();
+    return;
+  }
+  lastPingSentAt = sentAt;
   send("ping", { sentAt });
+  updateConnectionIndicator();
 }, 1500);
 
 window.addEventListener("keydown", (event) => {

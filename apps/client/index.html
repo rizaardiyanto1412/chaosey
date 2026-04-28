@@ -851,6 +851,57 @@
         font-weight: 700;
       }
 
+      .connection-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        width: fit-content;
+        min-height: 24px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(6, 18, 24, 0.55);
+        border: 1px solid rgba(255, 246, 221, 0.12);
+        color: #f1e6c8;
+        font-size: 0.9rem;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .connection-indicator::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: #9aa4a8;
+        box-shadow: 0 0 0 3px rgba(154, 164, 168, 0.15);
+      }
+
+      .connection-indicator.is-good::before {
+        background: #62df87;
+        box-shadow: 0 0 0 3px rgba(98, 223, 135, 0.18);
+      }
+
+      .connection-indicator.is-fair::before {
+        background: #f7d37d;
+        box-shadow: 0 0 0 3px rgba(247, 211, 125, 0.18);
+      }
+
+      .connection-indicator.is-slow::before,
+      .connection-indicator.is-lost::before {
+        background: #ff8c74;
+        box-shadow: 0 0 0 3px rgba(255, 140, 116, 0.18);
+      }
+
+      .connection-indicator.is-checking::before {
+        animation: connection-pulse 1.1s ease-in-out infinite;
+      }
+
+      @keyframes connection-pulse {
+        0%, 100% { opacity: 0.45; transform: scale(0.9); }
+        50% { opacity: 1; transform: scale(1); }
+      }
+
       .hud-copy,
       .meta-list {
         font-size: 0.92rem;
@@ -1123,7 +1174,7 @@
           <h2 id="role">Role: -</h2>
           <div class="hud-meta" id="room">Room: -</div>
           <div class="hud-copy" id="state">State: -</div>
-          <div class="hud-copy" id="latency">RTT: - ms</div>
+          <div class="connection-indicator is-checking" id="latency">RTT: checking</div>
           <div class="meta-list" id="players">Players: -</div>
         </div>
 
