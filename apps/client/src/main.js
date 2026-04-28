@@ -392,20 +392,21 @@ async function playSoundtrack(levelId) {
     if (soundtrackAudio) {
         await stopSoundtrack();
     }
-    soundtrackAudio = new Audio(soundtrackFile);
-    soundtrackAudio.loop = true;
-    soundtrackAudio.volume = 0;
-    soundtrackAudio.addEventListener("canplaythrough", () => {
+    const audio = new Audio(soundtrackFile);
+    soundtrackAudio = audio;
+    audio.loop = true;
+    audio.volume = 0;
+    audio.addEventListener("canplaythrough", () => {
         console.log("[Soundtrack] Audio can play through");
     });
-    soundtrackAudio.addEventListener("error", (e) => {
+    audio.addEventListener("error", (e) => {
         console.error("[Soundtrack] Audio error:", e);
     });
-    soundtrackAudio.addEventListener("loadeddata", () => {
-        console.log("[Soundtrack] Audio loaded data, duration:", soundtrackAudio.duration);
+    audio.addEventListener("loadeddata", () => {
+        console.log("[Soundtrack] Audio loaded data, duration:", audio.duration);
     });
     try {
-        await soundtrackAudio.play();
+        await audio.play();
         console.log("[Soundtrack] Play started successfully");
     }
     catch (err) {
@@ -431,16 +432,21 @@ async function stopSoundtrack() {
     if (!soundtrackAudio)
         return;
     isSoundtrackFading = true;
-    const startVolume = soundtrackAudio.volume;
+    const audio = soundtrackAudio;
+    const startVolume = audio.volume;
     const fadeOutDuration = 3000;
     const startTime = Date.now();
     const fadeInterval = setInterval(() => {
+        if (soundtrackAudio !== audio) {
+            clearInterval(fadeInterval);
+            return;
+        }
         const elapsed = Date.now() - startTime;
         const progress = Math.min(elapsed / fadeOutDuration, 1);
-        soundtrackAudio.volume = startVolume * (1 - progress);
+        audio.volume = startVolume * (1 - progress);
         if (progress >= 1) {
             clearInterval(fadeInterval);
-            soundtrackAudio.pause();
+            audio.pause();
             soundtrackAudio = null;
             currentSoundtrackLevel = null;
             isSoundtrackFading = false;
