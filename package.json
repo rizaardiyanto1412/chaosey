@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -ws --if-present",
+    "build": "npm run build --workspace=@wasd/shared && npm run build --workspace=@wasd/server",
     "compact-map": "node scripts/compact-spritefusion-map.js",
     "dev": "concurrently \"npm run dev -w @wasd/server\" \"npm run dev -w @wasd/client\"",
     "update-map": "bash scripts/update-reference-map.sh",
