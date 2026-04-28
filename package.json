@@ -12,7 +12,8 @@
     "dev": "concurrently \"npm run dev -w @wasd/server\" \"npm run dev -w @wasd/client\"",
     "update-map": "bash scripts/update-reference-map.sh",
     "typecheck": "npm run typecheck -ws --if-present",
-    "test": "npm run test -ws --if-present"
+    "test": "npm run test -ws --if-present",
+    "start": "npm run start --workspace=@wasd/server"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
