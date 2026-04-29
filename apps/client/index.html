@@ -616,6 +616,115 @@
         100% { transform: translateY(0) scale(1) rotate(0); opacity: 1; }
       }
 
+      .level-transition-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 15;
+        pointer-events: auto;
+        background:
+          radial-gradient(circle at 50% 42%, rgba(247, 211, 125, 0.2), transparent 34%),
+          linear-gradient(135deg, rgba(7, 20, 24, 0.96), rgba(20, 36, 32, 0.9));
+        animation: level-transition-fade 3200ms ease both;
+      }
+
+      .level-transition-overlay[hidden] {
+        display: none;
+      }
+
+      .level-transition-card {
+        width: min(620px, calc(100vw - 48px));
+        display: grid;
+        gap: 14px;
+        justify-items: center;
+        text-align: center;
+        padding: clamp(30px, 6vw, 58px);
+        border-radius: 34px;
+        border: 2px solid rgba(247, 211, 125, 0.58);
+        background: linear-gradient(180deg, rgba(255, 246, 221, 0.12), rgba(90, 47, 18, 0.16));
+        box-shadow: 0 26px 90px rgba(0, 0, 0, 0.5), inset 0 0 70px rgba(247, 211, 125, 0.08);
+        animation: level-transition-drift 3200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .level-transition-subtitle {
+        font-size: clamp(1rem, 2vw, 1.25rem);
+        letter-spacing: 0.32em;
+        text-transform: uppercase;
+        color: #f7d37d;
+      }
+
+      .level-transition-title {
+        font-size: clamp(4rem, 12vw, 8.5rem);
+        line-height: 0.9;
+        font-weight: 950;
+        letter-spacing: -0.06em;
+        color: #fff6dd;
+        text-shadow: 0 8px 36px rgba(0, 0, 0, 0.62);
+      }
+
+      .level-transition-body {
+        max-width: 460px;
+        color: #f3ead0;
+        font-size: clamp(1.05rem, 2.4vw, 1.45rem);
+        line-height: 1.45;
+      }
+
+      .level-transition-overlay.is-final {
+        background:
+          radial-gradient(circle at 50% 45%, rgba(255, 205, 86, 0.24), transparent 28%),
+          radial-gradient(circle at 25% 30%, rgba(239, 68, 68, 0.2), transparent 24%),
+          linear-gradient(145deg, rgba(18, 3, 8, 0.98), rgba(52, 8, 12, 0.95));
+        animation: final-transition-fade 3200ms ease both;
+      }
+
+      .level-transition-overlay.is-final .level-transition-card {
+        border-color: rgba(255, 205, 86, 0.8);
+        background: linear-gradient(180deg, rgba(255, 205, 86, 0.16), rgba(127, 29, 29, 0.36));
+        box-shadow: 0 32px 110px rgba(127, 29, 29, 0.62), inset 0 0 90px rgba(255, 205, 86, 0.12);
+        animation: final-transition-pulse 3200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .level-transition-overlay.is-final .level-transition-subtitle {
+        color: #ffdf78;
+      }
+
+      .level-transition-overlay.is-final .level-transition-title {
+        color: #ffefb0;
+        text-shadow: 0 0 20px rgba(255, 205, 86, 0.45), 0 10px 34px rgba(127, 29, 29, 0.75);
+      }
+
+      @keyframes level-transition-fade {
+        0% { opacity: 0; }
+        16% { opacity: 1; }
+        84% { opacity: 1; }
+        100% { opacity: 0.92; }
+      }
+
+      @keyframes level-transition-drift {
+        0% { transform: translateY(44px) scale(0.94); opacity: 0; }
+        30% { transform: translateY(0) scale(1); opacity: 1; }
+        74% { transform: translateY(-8px) scale(1.02); opacity: 1; }
+        100% { transform: translateY(-18px) scale(1.04); opacity: 0.9; }
+      }
+
+      @keyframes final-transition-fade {
+        0% { opacity: 0; filter: saturate(1); }
+        12% { opacity: 1; filter: saturate(1.35); }
+        84% { opacity: 1; filter: saturate(1.55); }
+        100% { opacity: 0.96; filter: saturate(1.7); }
+      }
+
+      @keyframes final-transition-pulse {
+        0% { transform: scale(0.82) rotate(-0.6deg); opacity: 0; }
+        24% { transform: scale(1.04) rotate(0.35deg); opacity: 1; }
+        45% { transform: scale(0.99) rotate(-0.25deg); }
+        68% { transform: scale(1.05) rotate(0.25deg); }
+        100% { transform: scale(1.1) rotate(-0.2deg); opacity: 0.95; }
+      }
+
       .hud-panel {
         position: absolute;
         pointer-events: auto;
@@ -1242,6 +1351,14 @@
           <div class="role-reveal-eyebrow">Your Role</div>
           <div class="role-reveal-keys" id="roleRevealKeys"></div>
           <div class="role-reveal-caption" id="roleRevealCaption">Press and hold your key to move the squirrel.</div>
+        </div>
+      </section>
+
+      <section class="level-transition-overlay" id="levelTransitionOverlay" hidden>
+        <div class="level-transition-card">
+          <div class="level-transition-subtitle" id="levelTransitionSubtitle">Get ready</div>
+          <div class="level-transition-title" id="levelTransitionTitle">Level 2</div>
+          <div class="level-transition-body" id="levelTransitionBody">The path ahead shifts...</div>
         </div>
       </section>
 

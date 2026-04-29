@@ -3,7 +3,7 @@
   "compilerOptions": {
     "types": ["vite/client"],
     "paths": {
-      "@wasd/shared": ["../../packages/shared/src"]
+      "@wasd/shared": ["packages/shared/src/index.ts"]
     }
   },
   "include": ["src/**/*"]

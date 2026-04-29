@@ -22,6 +22,7 @@ import {
   type InputState,
   type JoinedRoomPayload,
   type LevelLoadedPayload,
+  type LevelTransitionPayload,
   type ObstaclePositionUpdate,
   type PlayerRole,
   type PlayerStatus,
@@ -151,6 +152,7 @@ function discoverLevelIds(): string[] {
 
 const levelIds = discoverLevelIds();
 const initialLevelIndex = Math.max(0, levelIds.indexOf(defaultLevelId));
+const levelTransitionDurationMs = 3200;
 
 function levelIndexForId(levelId: string): number {
   const normalized = normalizeLevelId(levelId);
@@ -503,7 +505,10 @@ class WasdRoom extends Room {
   private roundResult?: RoundResult;
   private readonly snapshotIntervalMs = Math.max(1000 / Math.max(1, snapshotRate), 33);
   private lastSnapshotAt = 0;
-  private roundStartAt = 0;
+  private timerElapsedMs = 0;
+  private timerStartedAt = 0;
+  private timerRunning = false;
+  private levelTransition: LevelTransitionPayload | null = null;
 
   private updateRoomMetadata() {
     const metadata: RoomMetadata = {
@@ -727,6 +732,32 @@ class WasdRoom extends Room {
     this.updateRoomMetadata();
   }
 
+  private currentTimerElapsedMs(current = now()): number {
+    if (!this.timerRunning || this.timerStartedAt <= 0) {
+      return this.timerElapsedMs;
+    }
+    return this.timerElapsedMs + Math.max(0, current - this.timerStartedAt);
+  }
+
+  private startTimerIfNeeded(current = now()) {
+    if (this.timerRunning) return;
+    this.timerStartedAt = current;
+    this.timerRunning = true;
+  }
+
+  private pauseTimer(current = now()) {
+    if (!this.timerRunning) return;
+    this.timerElapsedMs = this.currentTimerElapsedMs(current);
+    this.timerStartedAt = 0;
+    this.timerRunning = false;
+  }
+
+  private resetTimer() {
+    this.timerElapsedMs = 0;
+    this.timerStartedAt = 0;
+    this.timerRunning = false;
+  }
+
   private removePlayer(playerId: string): boolean {
     const player = this.players.get(playerId);
     if (!player) return false;
@@ -771,6 +802,9 @@ class WasdRoom extends Room {
       score: this.score,
       collectedCollectibleIds: [...this.collectedCollectibleIds],
       countdownRemainingMs: 0,
+      timerElapsedMs: this.currentTimerElapsedMs(current),
+      timerRunning: this.timerRunning,
+      levelTransition: this.levelTransition,
       serverTime: current,
       obstaclePositions
     };
@@ -778,7 +812,10 @@ class WasdRoom extends Room {
   }
 
   private markRoundFail(reason: FailReason) {
+    this.pauseTimer();
     this.roomState = "round_end";
+    this.levelTransition = null;
+    this.inputState = emptyInputState();
     this.roundResult = {
       outcome: "fail",
       failReason: reason,
@@ -790,9 +827,12 @@ class WasdRoom extends Room {
   }
 
   private markRoundWin() {
-    const completionMs = this.roundStartAt > 0 ? Date.now() - this.roundStartAt : 0;
+    this.pauseTimer();
+    const completionMs = this.currentTimerElapsedMs();
     const playerCount = [...this.players.values()].filter((p) => p.connected).length;
     this.roomState = "round_end";
+    this.levelTransition = null;
+    this.inputState = emptyInputState();
     this.roundResult = {
       outcome: "win",
       winCondition: "goal_reached",
@@ -834,8 +874,35 @@ class WasdRoom extends Room {
   }
 
   private advanceLevelOrWin() {
-    if (this.loadLevelAtIndex(this.currentLevelIndex + 1)) {
+    const nextLevelIndex = this.currentLevelIndex + 1;
+    const toLevelId = levelIds[nextLevelIndex];
+    if (toLevelId) {
+      const transitionStartsAt = now();
+      this.pauseTimer(transitionStartsAt);
+      this.roomState = "level_transition";
+      this.inputState = emptyInputState();
+      this.levelTransition = {
+        fromLevelId: this.level.id,
+        toLevelId,
+        isFinalLevel: nextLevelIndex === levelIds.length - 1,
+        startsAt: transitionStartsAt,
+        endsAt: transitionStartsAt + levelTransitionDurationMs
+      };
+      this.emitRoomState();
       this.emitSnapshot(true);
+
+      this.clock.setTimeout(() => {
+        if (this.roomState !== "level_transition" || this.levelTransition?.toLevelId !== toLevelId) return;
+        if (!this.loadLevelAtIndex(nextLevelIndex)) {
+          this.markRoundWin();
+          return;
+        }
+        this.roomState = "playing";
+        this.levelTransition = null;
+        this.inputState = emptyInputState();
+        this.emitRoomState();
+        this.emitSnapshot(true);
+      }, levelTransitionDurationMs);
       return;
     }
     this.markRoundWin();
@@ -844,6 +911,8 @@ class WasdRoom extends Room {
   private resetRound() {
     this.roomState = "lobby";
     this.roundResult = undefined;
+    this.levelTransition = null;
+    this.resetTimer();
     this.loadLevelAtIndex(this.startLevelIndex);
     this.tick = 0;
     this.inputState = emptyInputState();
@@ -870,9 +939,10 @@ class WasdRoom extends Room {
   private startRound() {
     this.roomState = "playing";
     this.roundResult = undefined;
+    this.levelTransition = null;
+    this.resetTimer();
     this.loadLevelAtIndex(this.startLevelIndex);
     this.tick = 0;
-    this.roundStartAt = Date.now();
     this.inputState = emptyInputState();
     this.teamPosition = { ...this.level.spawn };
     this.collectedCollectibleIds.clear();
@@ -887,8 +957,10 @@ class WasdRoom extends Room {
     return this.players.get(playerId);
   }
 
-  private applyMovement(dt: number) {
+  private applyMovement(dt: number): boolean {
     const direction = composeDirection(this.inputState);
+    const startedAt = { ...this.teamPosition };
+    let moved = false;
     const clampX = (x: number) => Math.max(this.level.playerRadius, Math.min(this.level.width - this.level.playerRadius, x));
     const clampY = (y: number) => Math.max(this.level.playerRadius, Math.min(this.level.height - this.level.playerRadius, y));
 
@@ -904,16 +976,19 @@ class WasdRoom extends Room {
     const nextX = clampX(this.teamPosition.x + direction.x * this.level.moveSpeed * dt);
     if (collidesAt(nextX, this.teamPosition.y)) {
       this.respawnAtSpawn();
-      return;
+      return false;
     }
     this.teamPosition.x = nextX;
+    moved = moved || Math.abs(this.teamPosition.x - startedAt.x) > 0.001;
 
     const nextY = clampY(this.teamPosition.y + direction.y * this.level.moveSpeed * dt);
     if (collidesAt(this.teamPosition.x, nextY)) {
       this.respawnAtSpawn();
-      return;
+      return moved;
     }
     this.teamPosition.y = nextY;
+    moved = moved || Math.abs(this.teamPosition.y - startedAt.y) > 0.001;
+    return moved;
   }
 
   private collectOverlappingCollectibles() {
@@ -1030,7 +1105,10 @@ class WasdRoom extends Room {
 
     this.tick += 1;
     this.updateMovingObstacles();
-    this.applyMovement(1 / tickRate);
+    const moved = this.applyMovement(1 / tickRate);
+    if (moved) {
+      this.startTimerIfNeeded(nowAt);
+    }
     this.collectOverlappingCollectibles();
 
     this.resolveHazardCollision();
@@ -1058,7 +1136,10 @@ async function currentRoomSummaries(): Promise<LobbyRoomSummary[]> {
       const metadata = room.metadata as Partial<RoomMetadata> | undefined;
       const visibility: RoomVisibility = metadata?.visibility === "private" ? "private" : "public";
       const roomState: LobbyRoomSummary["roomState"] =
-        metadata?.roomState === "playing" || metadata?.roomState === "countdown" || metadata?.roomState === "round_end"
+        metadata?.roomState === "playing" ||
+        metadata?.roomState === "countdown" ||
+        metadata?.roomState === "level_transition" ||
+        metadata?.roomState === "round_end"
           ? metadata.roomState
           : "lobby";
       return {
