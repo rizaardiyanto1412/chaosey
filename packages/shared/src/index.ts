@@ -93,6 +93,8 @@ export interface GameState {
   timerElapsedMs: number;
   timerRunning: boolean;
   levelTransition: LevelTransitionPayload | null;
+  selectedPowerUp: PowerUpId | null;
+  powerUpHolderId: string | null;
   activePowerUp: ActivePowerUp | null;
   serverTime: number;
 }
@@ -121,6 +123,8 @@ export interface StateSnapshotPayload {
   timerElapsedMs: number;
   timerRunning: boolean;
   levelTransition: LevelTransitionPayload | null;
+  selectedPowerUp: PowerUpId | null;
+  powerUpHolderId: string | null;
   activePowerUp: ActivePowerUp | null;
   serverTime: number;
   obstaclePositions: ObstaclePositionUpdate[];

@@ -158,7 +158,7 @@ const levelTransitionDurationMs = 3200;
 const finalPowerChoiceLevelId = "level-10";
 const powerUpDurationsMs: Record<PowerUpId, number> = {
   speed_boost: 30000,
-  obstacle_slow: 20000,
+  obstacle_slow: 30000,
   shield: 30000
 };
 const powerUpLabels: Record<PowerUpId, string> = {
@@ -541,6 +541,8 @@ class WasdRoom extends Room {
   private timerStartedAt = 0;
   private timerRunning = false;
   private levelTransition: LevelTransitionPayload | null = null;
+  private selectedPowerUp: PowerUpId | null = null;
+  private powerUpHolderId: string | null = null;
   private activePowerUp: ActivePowerUp | null = null;
 
   private updateRoomMetadata() {
@@ -633,6 +635,12 @@ class WasdRoom extends Room {
       this.selectPowerUp(payload?.powerUpId);
     });
 
+    this.onMessage("activate_powerup", (client) => {
+      const player = this.playerFromClient(client.sessionId);
+      if (!player || !player.connected || this.roomState !== "playing") return;
+      this.activateSelectedPowerUp(player);
+    });
+
     this.onMessage("ping", (client, payload: { sentAt: number }) => {
       client.send("pong", { sentAt: payload.sentAt, serverAt: now() });
     });
@@ -676,6 +684,10 @@ class WasdRoom extends Room {
       };
       this.flushJoinState(client, joinedPayload, reconnect.roles);
       return;
+    }
+
+    if (this.roomState !== "lobby") {
+      throw new ServerError(400, "Game already started.");
     }
 
     if (this.players.size >= 4) {
@@ -814,7 +826,20 @@ class WasdRoom extends Room {
 
   private selectPowerUp(powerUpId: PowerUpId) {
     if (powerUpId !== "speed_boost" && powerUpId !== "obstacle_slow" && powerUpId !== "shield") return;
+    this.selectedPowerUp = powerUpId;
+    this.powerUpHolderId = this.connectedPowerPlayers()[0]?.playerId ?? null;
+    this.roomState = "playing";
+    this.levelTransition = null;
+    this.inputState = emptyInputState();
+    this.emitRoomState();
+    this.emitSnapshot(true);
+  }
+
+  private activateSelectedPowerUp(player: RoomPlayer) {
+    if (!this.selectedPowerUp || this.activePowerUp || this.powerUpHolderId !== player.playerId) return;
+    const powerUpId = this.selectedPowerUp;
     const current = now();
+    this.selectedPowerUp = null;
     this.activePowerUp = {
       id: powerUpId,
       label: powerUpLabels[powerUpId],
@@ -822,11 +847,29 @@ class WasdRoom extends Room {
       endsAt: current + powerUpDurationsMs[powerUpId],
       ...(powerUpId === "shield" ? { shieldHitsRemaining: 2 } : {})
     };
-    this.roomState = "playing";
-    this.levelTransition = null;
-    this.inputState = emptyInputState();
-    this.emitRoomState();
     this.emitSnapshot(true);
+  }
+
+  private connectedPowerPlayers(): RoomPlayer[] {
+    return [...this.players.values()].filter((player) => player.connected);
+  }
+
+  private rotatePowerUpHolderAfterDeath() {
+    const powerUpId = this.activePowerUp?.id ?? this.selectedPowerUp;
+    if (!powerUpId) return;
+    const connectedPlayers = this.connectedPowerPlayers();
+    if (connectedPlayers.length === 0) {
+      this.selectedPowerUp = powerUpId;
+      this.powerUpHolderId = null;
+      this.activePowerUp = null;
+      return;
+    }
+
+    const currentIndex = connectedPlayers.findIndex((player) => player.playerId === this.powerUpHolderId);
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % connectedPlayers.length : 0;
+    this.selectedPowerUp = powerUpId;
+    this.powerUpHolderId = connectedPlayers[nextIndex]?.playerId ?? null;
+    this.activePowerUp = null;
   }
 
   private movementSpeedMultiplier(current = now()): number {
@@ -894,6 +937,8 @@ class WasdRoom extends Room {
       timerElapsedMs: this.currentTimerElapsedMs(current),
       timerRunning: this.timerRunning,
       levelTransition: this.levelTransition,
+      selectedPowerUp: this.selectedPowerUp,
+      powerUpHolderId: this.powerUpHolderId,
       activePowerUp: this.currentActivePowerUp(current),
       serverTime: current,
       obstaclePositions
@@ -905,6 +950,8 @@ class WasdRoom extends Room {
     this.pauseTimer();
     this.roomState = "round_end";
     this.levelTransition = null;
+    this.selectedPowerUp = null;
+    this.powerUpHolderId = null;
     this.activePowerUp = null;
     this.inputState = emptyInputState();
     this.roundResult = {
@@ -934,6 +981,8 @@ class WasdRoom extends Room {
     });
     this.roomState = "round_end";
     this.levelTransition = null;
+    this.selectedPowerUp = null;
+    this.powerUpHolderId = null;
     this.activePowerUp = null;
     this.inputState = emptyInputState();
     this.roundResult = {
@@ -1013,6 +1062,8 @@ class WasdRoom extends Room {
     this.roomState = "lobby";
     this.roundResult = undefined;
     this.levelTransition = null;
+    this.selectedPowerUp = null;
+    this.powerUpHolderId = null;
     this.activePowerUp = null;
     this.resetTimer();
     this.loadLevelAtIndex(this.startLevelIndex);
@@ -1042,6 +1093,8 @@ class WasdRoom extends Room {
     this.roomState = "playing";
     this.roundResult = undefined;
     this.levelTransition = null;
+    this.selectedPowerUp = null;
+    this.powerUpHolderId = null;
     this.activePowerUp = null;
     this.resetTimer();
     this.loadLevelAtIndex(this.startLevelIndex);
@@ -1248,6 +1301,7 @@ class WasdRoom extends Room {
     this.collectOverlappingCollectibles();
 
     if (this.resolveHazardCollision()) {
+      this.rotatePowerUpHolderAfterDeath();
       this.respawnAtSpawn();
       this.emitSnapshot(true);
       return;
@@ -1269,7 +1323,7 @@ const transport = new uWebSocketsTransport({});
 const app = expressify(transport.app);
 app.use(cors({ origin: clientOrigin }));
 
-async function currentRoomSummaries(): Promise<LobbyRoomSummary[]> {
+async function currentRoomSummaries(options: { joinableOnly?: boolean } = {}): Promise<LobbyRoomSummary[]> {
   const rooms = await matchMaker.query({ name: "wasd_room" });
   return rooms
     .map((room) => {
@@ -1292,7 +1346,11 @@ async function currentRoomSummaries(): Promise<LobbyRoomSummary[]> {
         maxClients: Number(metadata?.maxClients ?? 4)
       };
     })
-    .filter((room) => room.visibility === "public" && room.roomCode.length > 0 && room.playerCount < room.maxClients);
+    .filter((room) => {
+      if (room.visibility !== "public" || room.roomCode.length === 0) return false;
+      if (room.playerCount >= room.maxClients) return false;
+      return !options.joinableOnly || room.roomState === "lobby";
+    });
 }
 
 function dashboardHtml() {
@@ -1395,7 +1453,7 @@ function dashboardHtml() {
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/rooms", async (_req, res) => {
-  res.json({ rooms: await currentRoomSummaries() });
+  res.json({ rooms: await currentRoomSummaries({ joinableOnly: true }) });
 });
 app.get("/leaderboard", (_req, res) => {
   res.json({ entries: leaderboard });
@@ -1421,6 +1479,10 @@ app.get("/rooms/:roomCode", async (req, res) => {
   const matched = rooms.find((room) => String(room.metadata?.roomCode ?? "").toUpperCase() === roomCode);
   if (!matched) {
     res.status(404).json({ error: "Room not found." });
+    return;
+  }
+  if (matched.metadata?.roomState !== "lobby") {
+    res.status(409).json({ error: "Game already started." });
     return;
   }
   res.json({ roomId: matched.roomId, roomCode });

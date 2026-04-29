@@ -70,6 +70,7 @@ const levelTransitionBodyEl = document.getElementById("levelTransitionBody") as 
 const powerChoiceOverlayEl = document.getElementById("powerChoiceOverlay") as HTMLElement;
 const powerChoiceCardsEl = document.getElementById("powerChoiceCards") as HTMLDivElement;
 const activePowerUpEl = document.getElementById("activePowerUp") as HTMLDivElement;
+const activatePowerUpEl = document.getElementById("activatePowerUp") as HTMLDivElement;
 const timerEl = document.getElementById("timer") as HTMLDivElement;
 const scoreEl = document.getElementById("scoreText") as HTMLSpanElement;
 const rosterEl = document.getElementById("hudRoster") as HTMLDivElement;
@@ -151,7 +152,7 @@ const powerUpOptions: Array<{
     eyebrow: "Control",
     title: "Slow Obstacles",
     description: "All moving hazards run at half speed while your team finds the route.",
-    stat: "20 sec"
+    stat: "30 sec"
   },
   {
     id: "shield",
@@ -817,6 +818,26 @@ function updateActivePowerUpDisplay() {
       : "";
   activePowerUpEl.hidden = false;
   activePowerUpEl.textContent = `${powerUp.label} ${remainingSeconds}s${shieldText}`;
+}
+
+function selectedPowerUpTitle(powerUpId: PowerUpId): string {
+  return powerUpOptions.find((option) => option.id === powerUpId)?.title ?? "Power";
+}
+
+function updateActivatePowerUpButton() {
+  if (!activatePowerUpEl) return;
+  const selectedPowerUp = latestState?.selectedPowerUp;
+  const holderId = latestState?.powerUpHolderId;
+  const shouldShow = latestState?.roomState === "playing" && Boolean(selectedPowerUp) && !latestState?.activePowerUp;
+  activatePowerUpEl.hidden = !shouldShow;
+  if (!shouldShow || !selectedPowerUp) return;
+  const holder = latestState?.players.find((player) => player.id === holderId);
+  const holderName = holder?.id === myPlayerId ? "You" : holder?.name || "Next player";
+  activatePowerUpEl.classList.toggle("is-mine", holderId === myPlayerId);
+  activatePowerUpEl.textContent =
+    holderId === myPlayerId
+      ? `Press Space: ${selectedPowerUpTitle(selectedPowerUp)}`
+      : `${holderName} has Space: ${selectedPowerUpTitle(selectedPowerUp)}`;
 }
 
 function resetLevelTransitionOverlayAnimation() {
@@ -1606,6 +1627,7 @@ function updateUi() {
   updateLevelTransitionOverlay();
   updatePowerChoiceOverlay();
   updateActivePowerUpDisplay();
+  updateActivatePowerUpButton();
   updateScoreDisplay();
   renderRoster();
 }
@@ -1845,6 +1867,8 @@ function bindRoom(room: Room) {
       timerElapsedMs: snapshot.timerElapsedMs,
       timerRunning: snapshot.timerRunning,
       levelTransition: snapshot.levelTransition,
+      selectedPowerUp: snapshot.selectedPowerUp,
+      powerUpHolderId: snapshot.powerUpHolderId,
       activePowerUp: snapshot.activePowerUp,
       serverTime: snapshot.serverTime
     };
@@ -2024,7 +2048,7 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
     } else if (options.roomCode) {
       const lookupRes = await fetch(`${httpServerUrl}/rooms/${encodeURIComponent(options.roomCode)}`);
       if (!lookupRes.ok) {
-        throw new Error("Room not found.");
+        throw new Error(lookupRes.status === 409 ? "Game already started." : "Room not found.");
       }
       const lookup = (await lookupRes.json()) as { roomId: string };
       currentRoom = await colyseus.joinById(lookup.roomId, { reconnectPlayerId, playerName });
@@ -2205,6 +2229,7 @@ setInterval(() => {
   send("ping", { sentAt });
   updateConnectionIndicator();
   updateActivePowerUpDisplay();
+  updateActivatePowerUpButton();
 }, 1500);
 
 window.addEventListener("keydown", (event) => {
@@ -2214,6 +2239,11 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape" && currentRoom) {
     void quitToMenu();
+    return;
+  }
+  if (event.code === "Space" && latestState?.roomState === "playing" && latestState.selectedPowerUp && latestState.powerUpHolderId === myPlayerId) {
+    event.preventDefault();
+    send("activate_powerup");
     return;
   }
   handlePress(event.key);

@@ -696,6 +696,178 @@
         text-shadow: 0 0 20px rgba(255, 205, 86, 0.45), 0 10px 34px rgba(127, 29, 29, 0.75);
       }
 
+      .power-choice-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 16;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        pointer-events: auto;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 50% 22%, rgba(255, 205, 86, 0.28), transparent 24rem),
+          radial-gradient(circle at 22% 72%, rgba(158, 207, 85, 0.18), transparent 18rem),
+          linear-gradient(145deg, rgba(5, 14, 19, 0.94), rgba(52, 8, 12, 0.88));
+      }
+
+      .power-choice-overlay[hidden] {
+        display: none;
+      }
+
+      .power-choice-panel {
+        width: min(980px, calc(100vw - 48px));
+        display: grid;
+        gap: 24px;
+        padding: clamp(24px, 4vw, 42px);
+        border-radius: 28px;
+        border: 1px solid rgba(255, 224, 138, 0.46);
+        background:
+          linear-gradient(180deg, rgba(255, 246, 221, 0.08), rgba(255, 246, 221, 0.02)),
+          rgba(8, 24, 28, 0.84);
+        box-shadow: 0 32px 110px rgba(0, 0, 0, 0.58), inset 0 0 80px rgba(247, 211, 125, 0.08);
+        backdrop-filter: blur(18px);
+        animation: power-choice-enter 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .power-choice-header {
+        display: grid;
+        gap: 8px;
+        text-align: center;
+      }
+
+      .power-choice-eyebrow {
+        font-size: clamp(0.78rem, 1.4vw, 0.96rem);
+        font-weight: 950;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: #ffdf78;
+      }
+
+      .power-choice-title {
+        margin: 0;
+        color: #fff6dd;
+        font-size: clamp(2.25rem, 6vw, 5.2rem);
+        line-height: 0.95;
+        text-shadow: 0 0 24px rgba(255, 205, 86, 0.28), 0 10px 34px rgba(0, 0, 0, 0.68);
+      }
+
+      .power-choice-copy {
+        margin: 0 auto;
+        max-width: 560px;
+        color: #f3ead0;
+        font-size: clamp(0.98rem, 1.6vw, 1.15rem);
+        line-height: 1.45;
+      }
+
+      .power-choice-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .power-choice-card {
+        position: relative;
+        display: grid;
+        gap: 10px;
+        min-height: 230px;
+        padding: 22px;
+        text-align: left;
+        color: #fff6dd;
+        border-radius: 22px;
+        border: 1px solid rgba(255, 228, 150, 0.28);
+        background:
+          radial-gradient(circle at 18% 10%, rgba(255, 240, 176, 0.18), transparent 36%),
+          linear-gradient(180deg, rgba(255, 246, 221, 0.12), rgba(255, 246, 221, 0.04)),
+          rgba(8, 25, 28, 0.82);
+        box-shadow: inset 0 1px 0 rgba(255, 246, 221, 0.12), 0 18px 44px rgba(0, 0, 0, 0.34);
+        transition: transform 160ms ease, border-color 160ms ease, filter 160ms ease, box-shadow 160ms ease;
+      }
+
+      .power-choice-card:hover,
+      .power-choice-card:focus-visible,
+      .power-choice-card.is-selected {
+        transform: translateY(-4px);
+        outline: none;
+        border-color: rgba(255, 223, 120, 0.82);
+        filter: brightness(1.04);
+        box-shadow: 0 24px 60px rgba(255, 205, 86, 0.16), 0 18px 44px rgba(0, 0, 0, 0.38);
+      }
+
+      .power-choice-card:disabled {
+        cursor: default;
+      }
+
+      .power-choice-card strong {
+        display: block;
+        font-size: clamp(1.35rem, 2.2vw, 1.85rem);
+        line-height: 1.05;
+      }
+
+      .power-choice-card span {
+        color: rgba(255, 246, 221, 0.86);
+        line-height: 1.45;
+      }
+
+      .power-choice-card .power-choice-card-eyebrow {
+        color: #cff7d0;
+        font-size: 0.78rem;
+        font-weight: 950;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      .power-choice-card em {
+        align-self: end;
+        width: fit-content;
+        margin-top: 6px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        color: #201307;
+        background: linear-gradient(180deg, #ffdf78, #dca54d);
+        font-style: normal;
+        font-weight: 950;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+      }
+
+      .active-power-up {
+        min-width: 0;
+        padding: 7px 11px;
+        border-radius: 999px;
+        color: #201307;
+        background: linear-gradient(180deg, #ffdf78, #dca54d);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 6px 18px rgba(0, 0, 0, 0.22);
+        font-size: 0.88rem;
+        font-weight: 950;
+        white-space: nowrap;
+      }
+
+      .active-power-up[hidden] {
+        display: none;
+      }
+
+      .activate-power-up {
+        min-height: 36px;
+        padding: 7px 13px;
+        border-radius: 999px;
+        color: #201307;
+        background: linear-gradient(180deg, #efe3bf, #c8ad70);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38), 0 8px 22px rgba(0, 0, 0, 0.24);
+        font-size: 0.88rem;
+        font-weight: 950;
+        white-space: nowrap;
+      }
+
+      .activate-power-up.is-mine {
+        background: linear-gradient(180deg, #cff7d0, #8fc75b);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38), 0 0 0 3px rgba(207, 247, 208, 0.13), 0 8px 22px rgba(0, 0, 0, 0.24);
+      }
+
+      .activate-power-up[hidden] {
+        display: none;
+      }
+
       @keyframes level-transition-fade {
         0% { opacity: 0; }
         16% { opacity: 1; }
@@ -723,6 +895,11 @@
         45% { transform: scale(0.99) rotate(-0.25deg); }
         68% { transform: scale(1.05) rotate(0.25deg); }
         100% { transform: scale(1.1) rotate(-0.2deg); opacity: 0.95; }
+      }
+
+      @keyframes power-choice-enter {
+        0% { transform: translateY(28px) scale(0.96); opacity: 0; }
+        100% { transform: translateY(0) scale(1); opacity: 1; }
       }
 
       .congrats-overlay {
@@ -1440,6 +1617,23 @@
           top: 82px;
           right: 16px;
         }
+
+        .power-choice-overlay {
+          align-items: flex-end;
+          padding: 16px;
+        }
+
+        .power-choice-panel {
+          width: 100%;
+        }
+
+        .power-choice-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .power-choice-card {
+          min-height: 0;
+        }
       }
 
       @media (max-width: 640px) {
@@ -1466,6 +1660,18 @@
         .hud-score .acorn-icon {
           width: 22px;
           height: 22px;
+        }
+
+        .active-power-up {
+          grid-column: 1 / -1;
+          justify-self: center;
+          font-size: 0.76rem;
+        }
+
+        .activate-power-up {
+          grid-column: 1 / -1;
+          justify-self: center;
+          font-size: 0.76rem;
         }
 
         .hud-connection {
@@ -1540,6 +1746,18 @@
         .congrats-actions .menu-button {
           flex: 1 1 180px;
           min-width: 0;
+        }
+
+        .power-choice-panel {
+          max-height: calc(100vh - 32px);
+          overflow-y: auto;
+          gap: 18px;
+          padding: 22px 16px;
+          border-radius: 24px;
+        }
+
+        .power-choice-card {
+          padding: 18px;
         }
       }
 
@@ -1643,6 +1861,8 @@
             <span id="scoreText">0 / 0</span>
           </div>
           <div class="hud-timer" id="timer">00:00.00</div>
+          <div class="active-power-up" id="activePowerUp" hidden></div>
+          <div class="activate-power-up" id="activatePowerUp" hidden>Press Space: Activate Power</div>
         </div>
 
         <div class="hud-panel hud-roster" id="hudRoster" hidden></div>
@@ -1688,6 +1908,17 @@
           <div class="level-transition-subtitle" id="levelTransitionSubtitle">Get ready</div>
           <div class="level-transition-title" id="levelTransitionTitle">Level 2</div>
           <div class="level-transition-body" id="levelTransitionBody">The path ahead shifts...</div>
+        </div>
+      </section>
+
+      <section class="power-choice-overlay" id="powerChoiceOverlay" hidden>
+        <div class="power-choice-panel">
+          <div class="power-choice-header">
+            <div class="power-choice-eyebrow">Final Level Superpower</div>
+            <h2 class="power-choice-title">Choose Your Edge</h2>
+            <p class="power-choice-copy">Pick one team power before level 10 begins. Player 1 activates it with Space. After each obstacle death, the Space trigger moves to the next player.</p>
+          </div>
+          <div class="power-choice-grid" id="powerChoiceCards"></div>
         </div>
       </section>
 

@@ -53,6 +53,10 @@ const levelTransitionOverlayEl = document.getElementById("levelTransitionOverlay
 const levelTransitionTitleEl = document.getElementById("levelTransitionTitle");
 const levelTransitionSubtitleEl = document.getElementById("levelTransitionSubtitle");
 const levelTransitionBodyEl = document.getElementById("levelTransitionBody");
+const powerChoiceOverlayEl = document.getElementById("powerChoiceOverlay");
+const powerChoiceCardsEl = document.getElementById("powerChoiceCards");
+const activePowerUpEl = document.getElementById("activePowerUp");
+const activatePowerUpEl = document.getElementById("activatePowerUp");
 const timerEl = document.getElementById("timer");
 const scoreEl = document.getElementById("scoreText");
 const rosterEl = document.getElementById("hudRoster");
@@ -107,6 +111,29 @@ const hazardMarkerLayerPattern = /^hazard_(left|right|up|down|circle)(?:_|$)/;
 const tumbleweedMarkerLayerPattern = /^tumbleweed_(left|right|up|down|circle)(?:_|$)/;
 const snowballMarkerLayerPattern = /^snowball_(left|right|up|down|circle)(?:_|$)/;
 const fireballMarkerLayerPattern = /^fireball_(left|right|up|down|circle)(?:_|$)/;
+const powerUpOptions = [
+    {
+        id: "speed_boost",
+        eyebrow: "Rush",
+        title: "Speed +25%",
+        description: "Move faster through the opening stretch of the final level.",
+        stat: "30 sec"
+    },
+    {
+        id: "obstacle_slow",
+        eyebrow: "Control",
+        title: "Slow Obstacles",
+        description: "All moving hazards run at half speed while your team finds the route.",
+        stat: "30 sec"
+    },
+    {
+        id: "shield",
+        eyebrow: "Survive",
+        title: "Two-Hit Shield",
+        description: "Block the next two obstacle hits before the final push gets dangerous.",
+        stat: "30 sec"
+    }
+];
 let game = null;
 let gameBootPromise = null;
 let gameBootResolve = null;
@@ -158,6 +185,7 @@ function showMenu(status = "") {
     setVisibility(lobbyOverlayEl, false);
     setVisibility(roleRevealOverlayEl, false);
     setVisibility(levelTransitionOverlayEl, false);
+    setVisibility(powerChoiceOverlayEl, false);
     hideCongratsScreen();
     if (roleRevealTimeout) {
         clearTimeout(roleRevealTimeout);
@@ -182,6 +210,7 @@ function showHud() {
     setVisibility(menuScreenEl, false);
     setVisibility(loadingScreenEl, false);
     setVisibility(hudEl, true);
+    setVisibility(powerChoiceOverlayEl, false);
     hideCongratsScreen();
     menuStatusEl.textContent = "";
     updateLobbyOverlay();
@@ -647,6 +676,81 @@ function updateLevelTransitionOverlay() {
     const remainingMs = Math.max(0, transition.endsAt - Date.now());
     levelTransitionOverlayEl.style.setProperty("--transition-progress", String(1 - remainingMs / Math.max(1, transition.endsAt - transition.startsAt)));
 }
+function renderPowerChoiceCards() {
+    if (!powerChoiceCardsEl || powerChoiceCardsEl.childElementCount > 0)
+        return;
+    for (const option of powerUpOptions) {
+        const button = document.createElement("button");
+        button.className = "power-choice-card";
+        button.type = "button";
+        button.dataset.powerUpId = option.id;
+        button.innerHTML = `
+      <span class="power-choice-card-eyebrow">${escapeHtml(option.eyebrow)}</span>
+      <strong>${escapeHtml(option.title)}</strong>
+      <span>${escapeHtml(option.description)}</span>
+      <em>${escapeHtml(option.stat)}</em>
+    `;
+        button.addEventListener("click", () => {
+            for (const card of powerChoiceCardsEl.querySelectorAll(".power-choice-card")) {
+                card.disabled = true;
+                card.classList.toggle("is-selected", card === button);
+            }
+            send("select_powerup", { powerUpId: option.id });
+        });
+        powerChoiceCardsEl.appendChild(button);
+    }
+}
+function updatePowerChoiceOverlay() {
+    if (!powerChoiceOverlayEl || !powerChoiceCardsEl)
+        return;
+    renderPowerChoiceCards();
+    const shouldShow = latestState?.roomState === "power_choice";
+    setVisibility(powerChoiceOverlayEl, shouldShow);
+    if (!shouldShow) {
+        for (const card of powerChoiceCardsEl.querySelectorAll(".power-choice-card")) {
+            card.disabled = false;
+            card.classList.remove("is-selected");
+        }
+        return;
+    }
+    setVisibility(levelTransitionOverlayEl, false);
+}
+function updateActivePowerUpDisplay() {
+    if (!activePowerUpEl)
+        return;
+    const powerUp = latestState?.activePowerUp;
+    if (!powerUp || powerUp.endsAt <= Date.now()) {
+        activePowerUpEl.hidden = true;
+        activePowerUpEl.textContent = "";
+        return;
+    }
+    const remainingSeconds = Math.ceil((powerUp.endsAt - Date.now()) / 1000);
+    const shieldText = powerUp.id === "shield" && typeof powerUp.shieldHitsRemaining === "number"
+        ? ` • ${powerUp.shieldHitsRemaining} hit${powerUp.shieldHitsRemaining === 1 ? "" : "s"}`
+        : "";
+    activePowerUpEl.hidden = false;
+    activePowerUpEl.textContent = `${powerUp.label} ${remainingSeconds}s${shieldText}`;
+}
+function selectedPowerUpTitle(powerUpId) {
+    return powerUpOptions.find((option) => option.id === powerUpId)?.title ?? "Power";
+}
+function updateActivatePowerUpButton() {
+    if (!activatePowerUpEl)
+        return;
+    const selectedPowerUp = latestState?.selectedPowerUp;
+    const holderId = latestState?.powerUpHolderId;
+    const shouldShow = latestState?.roomState === "playing" && Boolean(selectedPowerUp) && !latestState?.activePowerUp;
+    activatePowerUpEl.hidden = !shouldShow;
+    if (!shouldShow || !selectedPowerUp)
+        return;
+    const holder = latestState?.players.find((player) => player.id === holderId);
+    const holderName = holder?.id === myPlayerId ? "You" : holder?.name || "Next player";
+    activatePowerUpEl.classList.toggle("is-mine", holderId === myPlayerId);
+    activatePowerUpEl.textContent =
+        holderId === myPlayerId
+            ? `Press Space: ${selectedPowerUpTitle(selectedPowerUp)}`
+            : `${holderName} has Space: ${selectedPowerUpTitle(selectedPowerUp)}`;
+}
 function resetLevelTransitionOverlayAnimation() {
     if (!levelTransitionOverlayEl)
         return;
@@ -659,7 +763,7 @@ function updateScoreDisplay() {
         return;
     const collected = latestState?.score ?? 0;
     const total = latestState?.level.collectibles.length ?? 0;
-    scoreEl.textContent = `${collected} / ${total}`;
+    scoreEl.textContent = `${collected}/${total}`;
 }
 function connectedPlayers() {
     return latestState?.players.filter((player) => player.connected) ?? [];
@@ -1382,6 +1486,9 @@ function updateUi() {
     updateLobbyOverlay();
     syncLobbyControls();
     updateLevelTransitionOverlay();
+    updatePowerChoiceOverlay();
+    updateActivePowerUpDisplay();
+    updateActivatePowerUpButton();
     updateScoreDisplay();
     renderRoster();
 }
@@ -1604,6 +1711,9 @@ function bindRoom(room) {
             timerElapsedMs: snapshot.timerElapsedMs,
             timerRunning: snapshot.timerRunning,
             levelTransition: snapshot.levelTransition,
+            selectedPowerUp: snapshot.selectedPowerUp,
+            powerUpHolderId: snapshot.powerUpHolderId,
+            activePowerUp: snapshot.activePowerUp,
             serverTime: snapshot.serverTime
         };
         const previousState = latestState;
@@ -1773,7 +1883,7 @@ async function enterRoom(options) {
         else if (options.roomCode) {
             const lookupRes = await fetch(`${httpServerUrl}/rooms/${encodeURIComponent(options.roomCode)}`);
             if (!lookupRes.ok) {
-                throw new Error("Room not found.");
+                throw new Error(lookupRes.status === 409 ? "Game already started." : "Room not found.");
             }
             const lookup = (await lookupRes.json());
             currentRoom = await colyseus.joinById(lookup.roomId, { reconnectPlayerId, playerName });
@@ -1946,6 +2056,8 @@ setInterval(() => {
     lastPingSentAt = sentAt;
     send("ping", { sentAt });
     updateConnectionIndicator();
+    updateActivePowerUpDisplay();
+    updateActivatePowerUpButton();
 }, 1500);
 window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && (!howToModalEl.hidden || !createRoomModalEl.hidden || !joinRoomModalEl.hidden)) {
@@ -1954,6 +2066,11 @@ window.addEventListener("keydown", (event) => {
     }
     if (event.key === "Escape" && currentRoom) {
         void quitToMenu();
+        return;
+    }
+    if (event.code === "Space" && latestState?.roomState === "playing" && latestState.selectedPowerUp && latestState.powerUpHolderId === myPlayerId) {
+        event.preventDefault();
+        send("activate_powerup");
         return;
     }
     handlePress(event.key);
