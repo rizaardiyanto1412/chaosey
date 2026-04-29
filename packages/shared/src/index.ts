@@ -1,6 +1,6 @@
 export type PlayerRole = "W" | "A" | "S" | "D";
 
-export type RoomState = "lobby" | "countdown" | "playing" | "round_end";
+export type RoomState = "lobby" | "countdown" | "playing" | "level_transition" | "round_end";
 
 export type WinCondition = "goal_reached";
 
@@ -43,6 +43,14 @@ export interface LevelData {
   collectibles: Collectible[];
 }
 
+export interface LevelTransitionPayload {
+  fromLevelId: string;
+  toLevelId: string;
+  isFinalLevel: boolean;
+  startsAt: number;
+  endsAt: number;
+}
+
 export const DEFAULT_LEVEL_ID = "level-01";
 
 export interface InputState {
@@ -72,6 +80,9 @@ export interface GameState {
   score: number;
   collectedCollectibleIds: string[];
   countdownRemainingMs: number;
+  timerElapsedMs: number;
+  timerRunning: boolean;
+  levelTransition: LevelTransitionPayload | null;
   serverTime: number;
 }
 
@@ -96,6 +107,9 @@ export interface StateSnapshotPayload {
   score: number;
   collectedCollectibleIds: string[];
   countdownRemainingMs: number;
+  timerElapsedMs: number;
+  timerRunning: boolean;
+  levelTransition: LevelTransitionPayload | null;
   serverTime: number;
   obstaclePositions: ObstaclePositionUpdate[];
 }

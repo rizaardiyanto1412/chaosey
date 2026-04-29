@@ -59,6 +59,10 @@ const quitGameEl = document.getElementById("quitGame") as HTMLButtonElement;
 const roleRevealOverlayEl = document.getElementById("roleRevealOverlay") as HTMLElement;
 const roleRevealKeysEl = document.getElementById("roleRevealKeys") as HTMLDivElement;
 const roleRevealCaptionEl = document.getElementById("roleRevealCaption") as HTMLDivElement;
+const levelTransitionOverlayEl = document.getElementById("levelTransitionOverlay") as HTMLElement;
+const levelTransitionTitleEl = document.getElementById("levelTransitionTitle") as HTMLDivElement;
+const levelTransitionSubtitleEl = document.getElementById("levelTransitionSubtitle") as HTMLDivElement;
+const levelTransitionBodyEl = document.getElementById("levelTransitionBody") as HTMLDivElement;
 const timerEl = document.getElementById("timer") as HTMLDivElement;
 const scoreEl = document.getElementById("scoreText") as HTMLSpanElement;
 const rosterEl = document.getElementById("hudRoster") as HTMLDivElement;
@@ -122,7 +126,6 @@ let isTransitioningRoom = false;
 let hostStartPending = false;
 let previousRoomState: GameState["roomState"] | null = null;
 let roleRevealTimeout: ReturnType<typeof setTimeout> | null = null;
-let clientRoundStartAt = 0;
 let finalCompletionMs: number | null = null;
 let pendingDieAnimation:
   | {
@@ -180,12 +183,12 @@ function showMenu(status = "") {
   setVisibility(hudEl, false);
   setVisibility(lobbyOverlayEl, false);
   setVisibility(roleRevealOverlayEl, false);
+  setVisibility(levelTransitionOverlayEl, false);
   if (roleRevealTimeout) {
     clearTimeout(roleRevealTimeout);
     roleRevealTimeout = null;
   }
   previousRoomState = null;
-  clientRoundStartAt = 0;
   finalCompletionMs = null;
   pendingDieAnimation = null;
   menuStatusEl.textContent = status;
@@ -630,18 +633,55 @@ function formatTime(ms: number): string {
   return `${mm}:${ss}.${cc}`;
 }
 
+function levelNumberFromId(levelId: string): number | null {
+  const match = levelId.match(/(\d+)/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
 function updateTimerDisplay() {
   if (!timerEl) return;
   if (finalCompletionMs !== null) {
     timerEl.textContent = formatTime(finalCompletionMs);
     return;
   }
-  if (latestState?.roomState === "playing" && clientRoundStartAt > 0) {
-    const elapsed = Date.now() - clientRoundStartAt;
-    timerEl.textContent = formatTime(elapsed);
-  } else if (latestState?.roomState === "lobby") {
+  if (!latestState || latestState.roomState === "lobby") {
     timerEl.textContent = "00:00.00";
+    return;
   }
+
+  const smoothElapsed = latestState.timerRunning
+    ? latestState.timerElapsedMs + Math.max(0, Date.now() - latestState.serverTime)
+    : latestState.timerElapsedMs;
+  timerEl.textContent = formatTime(smoothElapsed);
+}
+
+function updateLevelTransitionOverlay() {
+  if (!levelTransitionOverlayEl || !levelTransitionTitleEl || !levelTransitionSubtitleEl || !levelTransitionBodyEl) return;
+  const transition = latestState?.levelTransition;
+  const shouldShow = latestState?.roomState === "level_transition" && Boolean(transition);
+  setVisibility(levelTransitionOverlayEl, shouldShow);
+  if (!shouldShow || !transition) return;
+
+  const levelNumber = levelNumberFromId(transition.toLevelId);
+  const isFinalLevel = transition.isFinalLevel || levelNumber === 10;
+  levelTransitionOverlayEl.classList.toggle("is-final", isFinalLevel);
+  levelTransitionTitleEl.textContent = isFinalLevel ? "FINAL LEVEL" : `Level ${levelNumber ?? transition.toLevelId}`;
+  levelTransitionSubtitleEl.textContent = isFinalLevel ? "This is the last one." : "Get ready";
+  levelTransitionBodyEl.textContent = isFinalLevel
+    ? "It will be brutal. Good luck."
+    : "The path ahead shifts...";
+
+  const remainingMs = Math.max(0, transition.endsAt - Date.now());
+  levelTransitionOverlayEl.style.setProperty("--transition-progress", String(1 - remainingMs / Math.max(1, transition.endsAt - transition.startsAt)));
+}
+
+function resetLevelTransitionOverlayAnimation() {
+  if (!levelTransitionOverlayEl) return;
+  levelTransitionOverlayEl.style.animation = "none";
+  void levelTransitionOverlayEl.offsetWidth;
+  levelTransitionOverlayEl.style.animation = "";
 }
 
 function updateScoreDisplay() {
@@ -1228,8 +1268,6 @@ function showRoleReveal(roles: PlayerRole[]) {
   roleRevealTimeout = setTimeout(() => {
     setVisibility(roleRevealOverlayEl, false);
     roleRevealTimeout = null;
-    // Start the timer only after the role reveal animation finishes
-    clientRoundStartAt = Date.now();
   }, 2600);
 }
 
@@ -1264,6 +1302,9 @@ function maybeTriggerRoleReveal(nextRoomState: GameState["roomState"]) {
   if (previousRoomState === "lobby" && nextRoomState === "playing") {
     showRoleReveal(myRoles);
     finalCompletionMs = null;
+  }
+  if (previousRoomState !== "level_transition" && nextRoomState === "level_transition") {
+    resetLevelTransitionOverlayAnimation();
   }
   previousRoomState = nextRoomState;
 }
@@ -1348,6 +1389,7 @@ function updateUi() {
   updateCreateRoomSummary();
   updateLobbyOverlay();
   syncLobbyControls();
+  updateLevelTransitionOverlay();
   updateScoreDisplay();
   renderRoster();
 }
@@ -1569,11 +1611,17 @@ function bindRoom(room: Room) {
       score: snapshot.score,
       collectedCollectibleIds: snapshot.collectedCollectibleIds,
       countdownRemainingMs: snapshot.countdownRemainingMs,
+      timerElapsedMs: snapshot.timerElapsedMs,
+      timerRunning: snapshot.timerRunning,
+      levelTransition: snapshot.levelTransition,
       serverTime: snapshot.serverTime
     };
 
     const previousState = latestState;
     latestState = state;
+    if (state.roomState === "lobby") {
+      finalCompletionMs = null;
+    }
     const mainScene = game?.scene.getScene("main") as MainScene | undefined;
     if ((previousState && previousState.level.id !== state.level.id) || (mainScene && !mainScene.isRenderingLevel(state.level.id))) {
       latestResult = null;

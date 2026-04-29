@@ -46,6 +46,10 @@ const quitGameEl = document.getElementById("quitGame");
 const roleRevealOverlayEl = document.getElementById("roleRevealOverlay");
 const roleRevealKeysEl = document.getElementById("roleRevealKeys");
 const roleRevealCaptionEl = document.getElementById("roleRevealCaption");
+const levelTransitionOverlayEl = document.getElementById("levelTransitionOverlay");
+const levelTransitionTitleEl = document.getElementById("levelTransitionTitle");
+const levelTransitionSubtitleEl = document.getElementById("levelTransitionSubtitle");
+const levelTransitionBodyEl = document.getElementById("levelTransitionBody");
 const timerEl = document.getElementById("timer");
 const scoreEl = document.getElementById("scoreText");
 const rosterEl = document.getElementById("hudRoster");
@@ -60,6 +64,7 @@ const selectedLevelId = import.meta.env.VITE_LEVEL_ID ?? DEFAULT_LEVEL_ID;
 const isDebugCreatePath = window.location.pathname === "/debugxthing";
 let currentRoom = null;
 let latestState = null;
+let currentLevel = null;
 let latestResult = null;
 let myRoles = [];
 let myPlayerId = "";
@@ -100,7 +105,6 @@ let isTransitioningRoom = false;
 let hostStartPending = false;
 let previousRoomState = null;
 let roleRevealTimeout = null;
-let clientRoundStartAt = 0;
 let finalCompletionMs = null;
 let pendingDieAnimation = null;
 let audioContext = null;
@@ -139,12 +143,12 @@ function showMenu(status = "") {
     setVisibility(hudEl, false);
     setVisibility(lobbyOverlayEl, false);
     setVisibility(roleRevealOverlayEl, false);
+    setVisibility(levelTransitionOverlayEl, false);
     if (roleRevealTimeout) {
         clearTimeout(roleRevealTimeout);
         roleRevealTimeout = null;
     }
     previousRoomState = null;
-    clientRoundStartAt = 0;
     finalCompletionMs = null;
     pendingDieAnimation = null;
     menuStatusEl.textContent = status;
@@ -548,6 +552,13 @@ function formatTime(ms) {
     const cc = String(centis).padStart(2, "0");
     return `${mm}:${ss}.${cc}`;
 }
+function levelNumberFromId(levelId) {
+    const match = levelId.match(/(\d+)/);
+    if (!match)
+        return null;
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? value : null;
+}
 function updateTimerDisplay() {
     if (!timerEl)
         return;
@@ -555,13 +566,40 @@ function updateTimerDisplay() {
         timerEl.textContent = formatTime(finalCompletionMs);
         return;
     }
-    if (latestState?.roomState === "playing" && clientRoundStartAt > 0) {
-        const elapsed = Date.now() - clientRoundStartAt;
-        timerEl.textContent = formatTime(elapsed);
-    }
-    else if (latestState?.roomState === "lobby") {
+    if (!latestState || latestState.roomState === "lobby") {
         timerEl.textContent = "00:00.00";
+        return;
     }
+    const smoothElapsed = latestState.timerRunning
+        ? latestState.timerElapsedMs + Math.max(0, Date.now() - latestState.serverTime)
+        : latestState.timerElapsedMs;
+    timerEl.textContent = formatTime(smoothElapsed);
+}
+function updateLevelTransitionOverlay() {
+    if (!levelTransitionOverlayEl || !levelTransitionTitleEl || !levelTransitionSubtitleEl || !levelTransitionBodyEl)
+        return;
+    const transition = latestState?.levelTransition;
+    const shouldShow = latestState?.roomState === "level_transition" && Boolean(transition);
+    setVisibility(levelTransitionOverlayEl, shouldShow);
+    if (!shouldShow || !transition)
+        return;
+    const levelNumber = levelNumberFromId(transition.toLevelId);
+    const isFinalLevel = transition.isFinalLevel || levelNumber === 10;
+    levelTransitionOverlayEl.classList.toggle("is-final", isFinalLevel);
+    levelTransitionTitleEl.textContent = isFinalLevel ? "FINAL LEVEL" : `Level ${levelNumber ?? transition.toLevelId}`;
+    levelTransitionSubtitleEl.textContent = isFinalLevel ? "This is the last one." : "Get ready";
+    levelTransitionBodyEl.textContent = isFinalLevel
+        ? "It will be brutal. Good luck."
+        : "The path ahead shifts...";
+    const remainingMs = Math.max(0, transition.endsAt - Date.now());
+    levelTransitionOverlayEl.style.setProperty("--transition-progress", String(1 - remainingMs / Math.max(1, transition.endsAt - transition.startsAt)));
+}
+function resetLevelTransitionOverlayAnimation() {
+    if (!levelTransitionOverlayEl)
+        return;
+    levelTransitionOverlayEl.style.animation = "none";
+    void levelTransitionOverlayEl.offsetWidth;
+    levelTransitionOverlayEl.style.animation = "";
 }
 function updateScoreDisplay() {
     if (!scoreEl)
@@ -1113,8 +1151,6 @@ function showRoleReveal(roles) {
     roleRevealTimeout = setTimeout(() => {
         setVisibility(roleRevealOverlayEl, false);
         roleRevealTimeout = null;
-        // Start the timer only after the role reveal animation finishes
-        clientRoundStartAt = Date.now();
     }, 2600);
 }
 function showWinReveal(result) {
@@ -1144,6 +1180,9 @@ function maybeTriggerRoleReveal(nextRoomState) {
     if (previousRoomState === "lobby" && nextRoomState === "playing") {
         showRoleReveal(myRoles);
         finalCompletionMs = null;
+    }
+    if (previousRoomState !== "level_transition" && nextRoomState === "level_transition") {
+        resetLevelTransitionOverlayAnimation();
     }
     previousRoomState = nextRoomState;
 }
@@ -1223,6 +1262,7 @@ function updateUi() {
     updateCreateRoomSummary();
     updateLobbyOverlay();
     syncLobbyControls();
+    updateLevelTransitionOverlay();
     updateScoreDisplay();
     renderRoster();
 }
@@ -1398,9 +1438,48 @@ function bindRoom(room) {
         updateUi();
         updateCreateRoomSummary();
     });
-    room.onMessage("state_snapshot", (state) => {
+    room.onMessage("level_loaded", ({ level }) => {
+        currentLevel = level;
+        if (latestState) {
+            latestState.level = level;
+        }
+    });
+    room.onMessage("state_snapshot", (snapshot) => {
+        if (!currentLevel || currentLevel.id !== snapshot.levelId) {
+            // Snapshot arrived before its matching level_loaded; ignore until in sync.
+            return;
+        }
+        // Apply moving-obstacle position updates onto the cached level.
+        if (snapshot.obstaclePositions.length > 0) {
+            const byId = new Map(snapshot.obstaclePositions.map((u) => [u.id, u]));
+            for (const obstacle of currentLevel.obstacles) {
+                const update = byId.get(obstacle.id);
+                if (update) {
+                    obstacle.position = { x: update.x, y: update.y };
+                }
+            }
+        }
+        const state = {
+            roomCode: snapshot.roomCode,
+            hostId: snapshot.hostId,
+            roomState: snapshot.roomState,
+            tick: snapshot.tick,
+            level: currentLevel,
+            players: snapshot.players,
+            teamPosition: snapshot.teamPosition,
+            score: snapshot.score,
+            collectedCollectibleIds: snapshot.collectedCollectibleIds,
+            countdownRemainingMs: snapshot.countdownRemainingMs,
+            timerElapsedMs: snapshot.timerElapsedMs,
+            timerRunning: snapshot.timerRunning,
+            levelTransition: snapshot.levelTransition,
+            serverTime: snapshot.serverTime
+        };
         const previousState = latestState;
         latestState = state;
+        if (state.roomState === "lobby") {
+            finalCompletionMs = null;
+        }
         const mainScene = game?.scene.getScene("main");
         if ((previousState && previousState.level.id !== state.level.id) || (mainScene && !mainScene.isRenderingLevel(state.level.id))) {
             latestResult = null;
@@ -1479,6 +1558,7 @@ function bindRoom(room) {
     room.onLeave(() => {
         currentRoom = null;
         latestState = null;
+        currentLevel = null;
         latestResult = null;
         myRoles = [];
         myPlayerId = "";
@@ -1529,6 +1609,7 @@ async function enterRoom(options) {
         const reconnectPlayerId = options.reconnectPlayerId;
         latestResult = null;
         latestState = null;
+        currentLevel = null;
         myRoles = [];
         myPlayerId = "";
         roomCode = "";
