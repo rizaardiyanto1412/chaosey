@@ -120,6 +120,9 @@ export interface RoundResult {
   failReason?: FailReason;
   atTick: number;
   completionMs?: number;
+  leaderboardRank?: number;
+  playerNames?: string[];
+  teamName?: string;
 }
 
 export interface CreateRoomResponse {

@@ -70,6 +70,12 @@ const hudSoundToggleEl = document.getElementById("hudSoundToggle") as HTMLButton
 const menuSoundToggleEl = document.getElementById("menuSoundToggle") as HTMLButtonElement;
 const leaderboardModalEl = document.getElementById("leaderboardModal") as HTMLElement;
 const leaderboardListEl = document.getElementById("leaderboardList") as HTMLDivElement;
+const congratsOverlayEl = document.getElementById("congratsOverlay") as HTMLElement;
+const congratsTeamEl = document.getElementById("congratsTeam") as HTMLSpanElement;
+const congratsTimeEl = document.getElementById("congratsTime") as HTMLElement;
+const congratsRankEl = document.getElementById("congratsRank") as HTMLElement;
+const shareResultXEl = document.getElementById("shareResultX") as HTMLButtonElement;
+const congratsCloseEl = document.getElementById("congratsClose") as HTMLButtonElement;
 
 const touchButtons = document.querySelectorAll<HTMLButtonElement>("[data-role]");
 const persistedRoomKey = "key-chaos.active-room";
@@ -127,6 +133,8 @@ let hostStartPending = false;
 let previousRoomState: GameState["roomState"] | null = null;
 let roleRevealTimeout: ReturnType<typeof setTimeout> | null = null;
 let finalCompletionMs: number | null = null;
+let latestCongratsResult: RoundResult | null = null;
+let latestCongratsTeam = "";
 let pendingDieAnimation:
   | {
       position: { x: number; y: number };
@@ -185,6 +193,7 @@ function showMenu(status = "") {
   setVisibility(lobbyOverlayEl, false);
   setVisibility(roleRevealOverlayEl, false);
   setVisibility(levelTransitionOverlayEl, false);
+  hideCongratsScreen();
   if (roleRevealTimeout) {
     clearTimeout(roleRevealTimeout);
     roleRevealTimeout = null;
@@ -202,6 +211,7 @@ function showLoading(label: string) {
   setVisibility(loadingScreenEl, true);
   setVisibility(menuScreenEl, false);
   setVisibility(lobbyOverlayEl, false);
+  hideCongratsScreen();
 }
 
 function showHud() {
@@ -209,6 +219,7 @@ function showHud() {
   setVisibility(menuScreenEl, false);
   setVisibility(loadingScreenEl, false);
   setVisibility(hudEl, true);
+  hideCongratsScreen();
   menuStatusEl.textContent = "";
   updateLobbyOverlay();
 }
@@ -722,6 +733,63 @@ function updateScoreDisplay() {
 
 function connectedPlayers() {
   return latestState?.players.filter((player) => player.connected) ?? [];
+}
+
+function fallbackTeamName() {
+  return roomCode ? `Team ${roomCode}` : "Team Chaosey";
+}
+
+function resultPlayerNames(result?: RoundResult | null) {
+  const names = result?.playerNames?.map((name) => name.trim()).filter(Boolean);
+  if (names && names.length > 0) return names;
+  const connectedNames = connectedPlayers().map((player) => player.name.trim()).filter(Boolean);
+  return connectedNames.length > 0 ? connectedNames : [fallbackTeamName()];
+}
+
+function resultTeamDisplay(result?: RoundResult | null) {
+  const teamName = result?.teamName?.trim();
+  if (teamName) return teamName;
+  return resultPlayerNames(result).join(", ");
+}
+
+function shareUrlForResult(result: RoundResult, teamDisplay: string) {
+  const timeText = formatTime(result.completionMs ?? 0);
+  const rankText = result.leaderboardRank ? `#${result.leaderboardRank}` : "Unranked";
+  const text = `${teamDisplay} completed Chaosey in ${timeText} with leaderboard rank ${rankText}. Can you beat us?`;
+  const params = new URLSearchParams({ text });
+  const origin = window.location.origin;
+  if (!origin.includes("localhost") && !origin.includes("127.0.0.1")) {
+    params.set("url", origin);
+  }
+  return `https://twitter.com/intent/tweet?${params.toString()}`;
+}
+
+function hideCongratsScreen() {
+  setVisibility(congratsOverlayEl, false);
+  latestCongratsResult = null;
+  latestCongratsTeam = "";
+}
+
+function showCongratsScreen(result: RoundResult) {
+  latestCongratsResult = result;
+  latestCongratsTeam = resultTeamDisplay(result);
+  congratsTeamEl.textContent = latestCongratsTeam;
+  congratsTimeEl.textContent = formatTime(result.completionMs ?? 0);
+  congratsRankEl.textContent = result.leaderboardRank ? `#${result.leaderboardRank}` : "Unranked";
+  shareResultXEl.dataset.shareUrl = shareUrlForResult(result, latestCongratsTeam);
+  setVisibility(roleRevealOverlayEl, false);
+  if (roleRevealTimeout) {
+    clearTimeout(roleRevealTimeout);
+    roleRevealTimeout = null;
+  }
+  setVisibility(congratsOverlayEl, true);
+  congratsOverlayEl.style.animation = "none";
+  void congratsOverlayEl.offsetWidth;
+  congratsOverlayEl.style.animation = "";
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] ?? c));
 }
 
 function renderRoster() {
@@ -1302,6 +1370,7 @@ function showRoleReveal(roles: PlayerRole[]) {
 
 function showWinReveal(result: RoundResult) {
   if (!roleRevealOverlayEl || !roleRevealKeysEl) return;
+  hideCongratsScreen();
 
   roleRevealKeysEl.innerHTML = "";
   const badge = document.createElement("div");
@@ -1329,6 +1398,7 @@ function showWinReveal(result: RoundResult) {
 
 function maybeTriggerRoleReveal(nextRoomState: GameState["roomState"]) {
   if (previousRoomState === "lobby" && nextRoomState === "playing") {
+    hideCongratsScreen();
     showRoleReveal(myRoles);
     finalCompletionMs = null;
   }
@@ -1502,8 +1572,11 @@ async function fetchRoomList() {
 }
 
 type LeaderboardEntryClient = {
+  rank?: number;
   completionMs: number;
   playerCount: number;
+  playerNames?: string[];
+  teamName?: string;
   at: string;
   roomCode: string;
 };
@@ -1531,15 +1604,17 @@ function renderLeaderboard(entries: LeaderboardEntryClient[]) {
   }
   leaderboardListEl.innerHTML = entries
     .map((entry, index) => {
-      const rankClass = index === 0 ? "top-1" : index === 1 ? "top-2" : index === 2 ? "top-3" : "";
+      const rank = entry.rank ?? index + 1;
+      const rankClass = rank === 1 ? "top-1" : rank === 2 ? "top-2" : rank === 3 ? "top-3" : "";
       const timeStr = formatTime(entry.completionMs);
       const dateStr = new Date(entry.at).toLocaleDateString();
+      const members = entry.teamName?.trim() || entry.playerNames?.filter(Boolean).join(", ") || "Unknown team";
       return `
         <div class="leaderboard-entry">
-          <div class="leaderboard-rank ${rankClass}">${index + 1}</div>
+          <div class="leaderboard-rank ${rankClass}">${rank}</div>
           <div class="leaderboard-info">
             <div class="leaderboard-time">${timeStr}</div>
-            <div class="leaderboard-meta">${dateStr} • Room ${entry.roomCode}</div>
+            <div class="leaderboard-meta">${dateStr} • Room ${escapeHtml(entry.roomCode)} • ${escapeHtml(members)}</div>
           </div>
           <div class="leaderboard-players">${entry.playerCount}P</div>
         </div>
@@ -1650,6 +1725,7 @@ function bindRoom(room: Room) {
     latestState = state;
     if (state.roomState === "lobby") {
       finalCompletionMs = null;
+      hideCongratsScreen();
     }
     const mainScene = game?.scene.getScene("main") as MainScene | undefined;
     if ((previousState && previousState.level.id !== state.level.id) || (mainScene && !mainScene.isRenderingLevel(state.level.id))) {
@@ -1711,9 +1787,13 @@ function bindRoom(room: Room) {
     }
     if (result.outcome === "win" && result.completionMs !== undefined) {
       finalCompletionMs = result.completionMs;
-      showWinReveal(result);
+      const currentLevelNum = latestState ? levelNumberFromId(latestState.level.id) : null;
+      if (currentLevelNum === 10) {
+        showCongratsScreen(result);
+      } else {
+        showWinReveal(result);
+      }
       if (latestState) {
-        const currentLevelNum = parseInt(latestState.level.id.replace(/\D/g, ""), 10);
         if (currentLevelNum === 3 || currentLevelNum === 6 || currentLevelNum === 9 || currentLevelNum === 10) {
           void stopSoundtrack();
         }
@@ -1746,6 +1826,7 @@ function bindRoom(room: Room) {
     hostStartPending = false;
     obstacleTargets.clear();
     pendingDieAnimation = null;
+    hideCongratsScreen();
     clearPersistedRoom();
     void stopSoundtrack();
     updateUi();
@@ -1774,6 +1855,7 @@ async function quitToMenu() {
   myRoomId = "";
   obstacleTargets.clear();
   pendingDieAnimation = null;
+  hideCongratsScreen();
   void stopSoundtrack();
   updateUi();
   showMenu();
@@ -1885,6 +1967,7 @@ async function joinPrivateRoomFromModal() {
 function startGame() {
   hostStartPending = true;
   closeAllModals();
+  hideCongratsScreen();
   send("start_game");
 }
 
@@ -1914,6 +1997,17 @@ document.getElementById("closeLeaderboard")?.addEventListener("click", closeAllM
 (document.getElementById("joinByCode") as HTMLButtonElement).onclick = () => void joinPrivateRoomFromModal();
 lobbyStartGameEl.onclick = startGame;
 quitGameEl.onclick = () => void quitToMenu();
+congratsCloseEl.onclick = () => void quitToMenu();
+shareResultXEl.onclick = () => {
+  const shareUrl = latestCongratsResult
+    ? shareUrlForResult(latestCongratsResult, latestCongratsTeam || resultTeamDisplay(latestCongratsResult))
+    : shareResultXEl.dataset.shareUrl;
+  if (!shareUrl) return;
+  const opened = window.open(shareUrl, "_blank", "noopener,noreferrer");
+  if (!opened) {
+    window.location.href = shareUrl;
+  }
+};
 
 visibilityPublicEl.onclick = () => setSelectedVisibility("public");
 visibilityPrivateEl.onclick = () => setSelectedVisibility("private");

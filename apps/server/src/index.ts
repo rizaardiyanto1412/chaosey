@@ -181,8 +181,11 @@ function randomCode(): string {
 const activeRoomCodes = new Set<string>();
 
 type LeaderboardEntry = {
+  rank: number;
   completionMs: number;
   playerCount: number;
+  playerNames: string[];
+  teamName: string;
   at: string; // ISO date
   roomCode: string;
 };
@@ -190,13 +193,14 @@ type LeaderboardEntry = {
 const leaderboard: LeaderboardEntry[] = [];
 const maxLeaderboardEntries = 10;
 
-function addLeaderboardEntry(entry: LeaderboardEntry) {
-  leaderboard.push(entry);
-  leaderboard.sort((a, b) => a.completionMs - b.completionMs);
-  // Keep only top N
-  if (leaderboard.length > maxLeaderboardEntries) {
-    leaderboard.splice(maxLeaderboardEntries);
-  }
+function addLeaderboardEntry(entry: Omit<LeaderboardEntry, "rank">): LeaderboardEntry {
+  const rankedEntry: LeaderboardEntry = { ...entry, rank: 0 };
+  const sortedEntries = [...leaderboard, rankedEntry].sort((a, b) => a.completionMs - b.completionMs);
+  sortedEntries.forEach((item, index) => {
+    item.rank = index + 1;
+  });
+  leaderboard.splice(0, leaderboard.length, ...sortedEntries.slice(0, maxLeaderboardEntries));
+  return rankedEntry;
 }
 
 function nextRoomCode(): string {
@@ -829,7 +833,18 @@ class WasdRoom extends Room {
   private markRoundWin() {
     this.pauseTimer();
     const completionMs = this.currentTimerElapsedMs();
-    const playerCount = [...this.players.values()].filter((p) => p.connected).length;
+    const connectedPlayers = [...this.players.values()].filter((p) => p.connected);
+    const playerCount = connectedPlayers.length;
+    const playerNames = connectedPlayers.map((p) => p.name);
+    const teamName = playerNames.length > 0 ? playerNames.join(", ") : `Team ${this.roomCode}`;
+    const leaderboardEntry = addLeaderboardEntry({
+      completionMs,
+      playerCount,
+      playerNames,
+      teamName,
+      at: new Date().toISOString(),
+      roomCode: this.roomCode
+    });
     this.roomState = "round_end";
     this.levelTransition = null;
     this.inputState = emptyInputState();
@@ -837,14 +852,11 @@ class WasdRoom extends Room {
       outcome: "win",
       winCondition: "goal_reached",
       atTick: this.tick,
-      completionMs
-    };
-    addLeaderboardEntry({
       completionMs,
-      playerCount,
-      at: new Date().toISOString(),
-      roomCode: this.roomCode
-    });
+      leaderboardRank: leaderboardEntry.rank,
+      playerNames,
+      teamName
+    };
     this.broadcast("round_result", this.roundResult);
     this.emitRoomState();
     this.emitSnapshot(true);
@@ -1210,8 +1222,8 @@ function dashboardHtml() {
       <div class="card">
         <h2>Leaderboard</h2>
         <table>
-          <thead><tr><th>Time</th><th>Players</th><th>Room</th></tr></thead>
-          <tbody id="leaderboardBody"><tr><td colspan="3" class="muted">No entries</td></tr></tbody>
+          <thead><tr><th>Rank</th><th>Time</th><th>Members</th><th>Players</th><th>Room</th></tr></thead>
+          <tbody id="leaderboardBody"><tr><td colspan="5" class="muted">No entries</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -1230,6 +1242,7 @@ function dashboardHtml() {
       const centis = Math.floor((ms % 1000) / 10);
       return String(minutes).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0") + "." + String(centis).padStart(2, "0");
     };
+    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     async function refresh() {
       const response = await fetch("/dashboard/status", { cache: "no-store" });
       const data = await response.json();
@@ -1243,8 +1256,8 @@ function dashboardHtml() {
         ? '<tr><td colspan="4" class="muted">No rooms</td></tr>'
         : data.rooms.map((room) => '<tr><td><span class="pill">' + room.roomCode + '</span></td><td>' + room.roomState + '</td><td>' + room.playerCount + '/' + room.maxClients + '</td><td class="muted">' + room.roomId + '</td></tr>').join("");
       document.getElementById("leaderboardBody").innerHTML = data.leaderboard.length === 0
-        ? '<tr><td colspan="3" class="muted">No entries</td></tr>'
-        : data.leaderboard.map((entry) => '<tr><td>' + fmtTime(entry.completionMs) + '</td><td>' + entry.playerCount + '</td><td><span class="pill">' + entry.roomCode + '</span></td></tr>').join("");
+        ? '<tr><td colspan="5" class="muted">No entries</td></tr>'
+        : data.leaderboard.map((entry, index) => '<tr><td>#' + (entry.rank ?? index + 1) + '</td><td>' + fmtTime(entry.completionMs) + '</td><td>' + esc(entry.teamName ?? (entry.playerNames || []).join(", ")) + '</td><td>' + entry.playerCount + '</td><td><span class="pill">' + esc(entry.roomCode) + '</span></td></tr>').join("");
     }
     refresh().catch(() => { document.getElementById("statusText").textContent = "Error"; });
     setInterval(() => refresh().catch(() => { document.getElementById("statusText").textContent = "Error"; }), 5000);
