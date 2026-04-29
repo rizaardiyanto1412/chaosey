@@ -1043,7 +1043,6 @@ class WasdRoom extends Room {
       if (obstacle.kind !== "hazard" && obstacle.kind !== "tumbleweed" && obstacle.kind !== "snowball" && obstacle.kind !== "fireball") continue;
       const hit = circlesIntersectsRect(this.teamPosition, this.level.playerRadius, obstacle.position, obstacle.size);
       if (!hit) continue;
-      this.respawnAtSpawn();
       return true;
     }
     return false;
@@ -1111,7 +1110,10 @@ class WasdRoom extends Room {
     }
     this.collectOverlappingCollectibles();
 
-    this.resolveHazardCollision();
+    if (this.resolveHazardCollision()) {
+      this.markRoundFail("trap_hit");
+      return;
+    }
     if (this.resolveGoalCollision()) {
       this.advanceLevelOrWin();
     }
