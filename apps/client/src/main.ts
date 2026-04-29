@@ -137,7 +137,8 @@ let audioContext: AudioContext | null = null;
 let soundtrackAudio: HTMLAudioElement | null = null;
 let lobbyAudio: HTMLAudioElement | null = null;
 let currentSoundtrackLevel: string | null = null;
-let isSoundtrackFading = false;
+let soundtrackFadeInterval: ReturnType<typeof setInterval> | null = null;
+let soundtrackPlaybackToken = 0;
 const mutePrefKey = "key-chaos.muted";
 let isMuted = (() => {
   try {
@@ -436,39 +437,65 @@ function playCoinSound() {
   oscillator.stop(startedAt + duration);
 }
 
-function getSoundtrackForLevel(levelId: string): string {
-  const levelNum = parseInt(levelId.replace(/\D/g, ""), 10);
+function getSoundtrackLevelNumber(levelId: string): number | null {
+  const match = levelId.match(/\d+/);
+  if (!match) return null;
+  const levelNum = Number.parseInt(match[0], 10);
+  return Number.isFinite(levelNum) ? levelNum : null;
+}
+
+function getSoundtrackForLevel(levelId: string): string | null {
+  const levelNum = getSoundtrackLevelNumber(levelId);
+  if (levelNum === null) return null;
   if (levelNum >= 1 && levelNum <= 3) return "/assets/sounds/1-3.mp3";
   if (levelNum >= 4 && levelNum <= 6) return "/assets/sounds/4-6.mp3";
   if (levelNum >= 7 && levelNum <= 9) return "/assets/sounds/7-9.mp3";
-  return "/assets/sounds/10.mp3";
+  if (levelNum === 10) return "/assets/sounds/10.mp3";
+  return null;
 }
 
-function getSoundtrackGroup(levelId: string): string {
-  const levelNum = parseInt(levelId.replace(/\D/g, ""), 10);
+function getSoundtrackGroup(levelId: string): string | null {
+  const levelNum = getSoundtrackLevelNumber(levelId);
+  if (levelNum === null) return null;
   if (levelNum >= 1 && levelNum <= 3) return "1-3";
   if (levelNum >= 4 && levelNum <= 6) return "4-6";
   if (levelNum >= 7 && levelNum <= 9) return "7-9";
-  return "10";
+  if (levelNum === 10) return "10";
+  return null;
+}
+
+function clearSoundtrackFadeInterval() {
+  if (!soundtrackFadeInterval) return;
+  clearInterval(soundtrackFadeInterval);
+  soundtrackFadeInterval = null;
 }
 
 async function playSoundtrack(levelId: string) {
   const soundtrackFile = getSoundtrackForLevel(levelId);
   const newGroup = getSoundtrackGroup(levelId);
 
+  if (!soundtrackFile || !newGroup) {
+    console.warn("[Soundtrack] No soundtrack for level", levelId);
+    stopSoundtrack();
+    return;
+  }
+
   console.log("[Soundtrack] Playing", soundtrackFile, "for level", levelId, "group", newGroup);
 
-  if (currentSoundtrackLevel && getSoundtrackGroup(currentSoundtrackLevel) === newGroup) {
+  if (soundtrackAudio && currentSoundtrackLevel && getSoundtrackGroup(currentSoundtrackLevel) === newGroup) {
     console.log("[Soundtrack] Same group, skipping");
     return;
   }
 
   if (soundtrackAudio) {
-    await stopSoundtrack();
+    stopSoundtrack();
   }
 
   const audio = new Audio(soundtrackFile);
+  const playbackToken = soundtrackPlaybackToken + 1;
+  soundtrackPlaybackToken = playbackToken;
   soundtrackAudio = audio;
+  currentSoundtrackLevel = levelId;
   audio.loop = true;
   audio.volume = 0;
 
@@ -486,57 +513,59 @@ async function playSoundtrack(levelId: string) {
 
   try {
     await audio.play();
+    if (soundtrackPlaybackToken !== playbackToken || soundtrackAudio !== audio) {
+      audio.pause();
+      return;
+    }
     console.log("[Soundtrack] Play started successfully");
   } catch (err) {
+    if (soundtrackAudio === audio) {
+      soundtrackAudio = null;
+      currentSoundtrackLevel = null;
+    }
     console.error("[Soundtrack] Play error:", err);
     return;
   }
 
+  clearSoundtrackFadeInterval();
   const fadeInDuration = 3000;
   const startTime = Date.now();
   const fadeInterval = setInterval(() => {
-    const elapsed = Date.now() - startTime;
-    const progress = Math.min(elapsed / fadeInDuration, 1);
-    if (soundtrackAudio) {
-      soundtrackAudio.volume = isMuted ? 0 : progress * soundtrackBaseVolume;
-    }
-
-    if (progress >= 1) {
+    if (soundtrackPlaybackToken !== playbackToken || soundtrackAudio !== audio) {
       clearInterval(fadeInterval);
-    }
-  }, 50);
-
-  currentSoundtrackLevel = levelId;
-  isSoundtrackFading = false;
-}
-
-async function stopSoundtrack() {
-  if (!soundtrackAudio) return;
-
-  isSoundtrackFading = true;
-  const audio = soundtrackAudio;
-  const startVolume = audio.volume;
-  const fadeOutDuration = 3000;
-  const startTime = Date.now();
-
-  const fadeInterval = setInterval(() => {
-    if (soundtrackAudio !== audio) {
-      clearInterval(fadeInterval);
+      if (soundtrackFadeInterval === fadeInterval) {
+        soundtrackFadeInterval = null;
+      }
       return;
     }
 
     const elapsed = Date.now() - startTime;
-    const progress = Math.min(elapsed / fadeOutDuration, 1);
-    audio.volume = startVolume * (1 - progress);
+    const progress = Math.min(elapsed / fadeInDuration, 1);
+    audio.volume = isMuted ? 0 : progress * soundtrackBaseVolume;
 
     if (progress >= 1) {
       clearInterval(fadeInterval);
-      audio.pause();
-      soundtrackAudio = null;
-      currentSoundtrackLevel = null;
-      isSoundtrackFading = false;
+      if (soundtrackFadeInterval === fadeInterval) {
+        soundtrackFadeInterval = null;
+      }
     }
   }, 50);
+  soundtrackFadeInterval = fadeInterval;
+}
+
+function stopSoundtrack() {
+  soundtrackPlaybackToken += 1;
+  clearSoundtrackFadeInterval();
+
+  if (!soundtrackAudio) {
+    currentSoundtrackLevel = null;
+    return;
+  }
+
+  const audio = soundtrackAudio;
+  soundtrackAudio = null;
+  currentSoundtrackLevel = null;
+  audio.pause();
 }
 
 async function playLobbySound() {
