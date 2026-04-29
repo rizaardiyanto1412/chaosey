@@ -1,6 +1,8 @@
 export type PlayerRole = "W" | "A" | "S" | "D";
 
-export type RoomState = "lobby" | "countdown" | "playing" | "level_transition" | "round_end";
+export type RoomState = "lobby" | "countdown" | "playing" | "level_transition" | "power_choice" | "round_end";
+
+export type PowerUpId = "speed_boost" | "obstacle_slow" | "shield";
 
 export type WinCondition = "goal_reached";
 
@@ -51,6 +53,14 @@ export interface LevelTransitionPayload {
   endsAt: number;
 }
 
+export interface ActivePowerUp {
+  id: PowerUpId;
+  label: string;
+  startedAt: number;
+  endsAt: number;
+  shieldHitsRemaining?: number;
+}
+
 export const DEFAULT_LEVEL_ID = "level-01";
 
 export interface InputState {
@@ -83,6 +93,7 @@ export interface GameState {
   timerElapsedMs: number;
   timerRunning: boolean;
   levelTransition: LevelTransitionPayload | null;
+  activePowerUp: ActivePowerUp | null;
   serverTime: number;
 }
 
@@ -110,6 +121,7 @@ export interface StateSnapshotPayload {
   timerElapsedMs: number;
   timerRunning: boolean;
   levelTransition: LevelTransitionPayload | null;
+  activePowerUp: ActivePowerUp | null;
   serverTime: number;
   obstaclePositions: ObstaclePositionUpdate[];
 }

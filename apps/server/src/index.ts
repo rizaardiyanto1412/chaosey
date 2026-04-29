@@ -1,7 +1,7 @@
 import "dotenv/config";
 import cors from "cors";
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Room, ServerError, matchMaker } from "@colyseus/core";
 import { Server } from "colyseus";
@@ -11,6 +11,7 @@ import { z } from "zod";
 import {
   DEFAULT_LEVEL,
   DEFAULT_LEVEL_ID,
+  type ActivePowerUp,
   circlesIntersectsRect,
   type Collectible,
   composeDirection,
@@ -26,6 +27,7 @@ import {
   type ObstaclePositionUpdate,
   type PlayerRole,
   type PlayerStatus,
+  type PowerUpId,
   type RoomMetadata,
   type RoomState,
   type RoomVisibility,
@@ -153,6 +155,17 @@ function discoverLevelIds(): string[] {
 const levelIds = discoverLevelIds();
 const initialLevelIndex = Math.max(0, levelIds.indexOf(defaultLevelId));
 const levelTransitionDurationMs = 3200;
+const finalPowerChoiceLevelId = "level-10";
+const powerUpDurationsMs: Record<PowerUpId, number> = {
+  speed_boost: 30000,
+  obstacle_slow: 20000,
+  shield: 30000
+};
+const powerUpLabels: Record<PowerUpId, string> = {
+  speed_boost: "Speed +25%",
+  obstacle_slow: "Obstacles slowed",
+  shield: "Two-hit shield"
+};
 
 function levelIndexForId(levelId: string): number {
   const normalized = normalizeLevelId(levelId);
@@ -192,6 +205,19 @@ type LeaderboardEntry = {
 
 const leaderboard: LeaderboardEntry[] = [];
 const maxLeaderboardEntries = 10;
+
+type ShareRecord = {
+  id: string;
+  teamName: string;
+  completionMs: number;
+  leaderboardRank: number | null;
+  createdAt: string;
+};
+
+const shareRecords = new Map<string, ShareRecord>();
+const shareDir = path.resolve(process.cwd(), ".share-uploads");
+const maxShareImageBytes = 2 * 1024 * 1024; // 2 MB
+if (!existsSync(shareDir)) mkdirSync(shareDir, { recursive: true });
 
 function addLeaderboardEntry(entry: Omit<LeaderboardEntry, "rank">): LeaderboardEntry {
   const rankedEntry: LeaderboardEntry = { ...entry, rank: 0 };
@@ -493,6 +519,8 @@ class WasdRoom extends Room {
   private roomCode = "";
   private hostId = "";
   private debugSolo = false;
+  private debugInvincible = false;
+  private debugSpawnNearGoal = false;
   private visibility: RoomVisibility = "public";
   private roomState: RoomState = "lobby";
   private tick = 0;
@@ -513,6 +541,7 @@ class WasdRoom extends Room {
   private timerStartedAt = 0;
   private timerRunning = false;
   private levelTransition: LevelTransitionPayload | null = null;
+  private activePowerUp: ActivePowerUp | null = null;
 
   private updateRoomMetadata() {
     const metadata: RoomMetadata = {
@@ -541,9 +570,11 @@ class WasdRoom extends Room {
     }, 0);
   }
 
-  onCreate(options?: { debugLevelId?: string; debugMoveSpeed?: number; debugSolo?: boolean; visibility?: RoomVisibility }) {
+  onCreate(options?: { debugLevelId?: string; debugMoveSpeed?: number; debugSolo?: boolean; debugInvincible?: boolean; debugSpawnNearGoal?: boolean; visibility?: RoomVisibility }) {
     this.maxClients = 4;
     this.debugSolo = Boolean(options?.debugSolo);
+    this.debugInvincible = Boolean(options?.debugSolo) && Boolean(options?.debugInvincible);
+    this.debugSpawnNearGoal = Boolean(options?.debugSolo) && Boolean(options?.debugSpawnNearGoal);
     this.startLevelIndex = this.debugSolo && options?.debugLevelId ? levelIndexForId(options.debugLevelId) : initialLevelIndex;
     this.currentLevelIndex = this.startLevelIndex;
     this.visibility = options?.visibility === "private" ? "private" : "public";
@@ -594,6 +625,12 @@ class WasdRoom extends Room {
       if (!player.roles.includes(payload.role)) return;
       this.inputState[payload.role] = false;
       player.lastInputAt = now();
+    });
+
+    this.onMessage("select_powerup", (client, payload: { powerUpId: PowerUpId }) => {
+      const player = this.playerFromClient(client.sessionId);
+      if (!player || !player.connected || this.roomState !== "power_choice") return;
+      this.selectPowerUp(payload?.powerUpId);
     });
 
     this.onMessage("ping", (client, payload: { sentAt: number }) => {
@@ -762,6 +799,54 @@ class WasdRoom extends Room {
     this.timerRunning = false;
   }
 
+  private currentActivePowerUp(current = now()): ActivePowerUp | null {
+    if (!this.activePowerUp) return null;
+    if (this.activePowerUp.endsAt <= current) {
+      this.activePowerUp = null;
+      return null;
+    }
+    return this.activePowerUp;
+  }
+
+  private isPowerChoiceTransition(fromLevelId: string, toLevelId: string): boolean {
+    return levelIndexForId(toLevelId) === levelIndexForId(finalPowerChoiceLevelId) && levelIndexForId(toLevelId) === levelIndexForId(fromLevelId) + 1;
+  }
+
+  private selectPowerUp(powerUpId: PowerUpId) {
+    if (powerUpId !== "speed_boost" && powerUpId !== "obstacle_slow" && powerUpId !== "shield") return;
+    const current = now();
+    this.activePowerUp = {
+      id: powerUpId,
+      label: powerUpLabels[powerUpId],
+      startedAt: current,
+      endsAt: current + powerUpDurationsMs[powerUpId],
+      ...(powerUpId === "shield" ? { shieldHitsRemaining: 2 } : {})
+    };
+    this.roomState = "playing";
+    this.levelTransition = null;
+    this.inputState = emptyInputState();
+    this.emitRoomState();
+    this.emitSnapshot(true);
+  }
+
+  private movementSpeedMultiplier(current = now()): number {
+    return this.currentActivePowerUp(current)?.id === "speed_boost" ? 1.25 : 1;
+  }
+
+  private obstacleSpeedMultiplier(current = now()): number {
+    return this.currentActivePowerUp(current)?.id === "obstacle_slow" ? 0.5 : 1;
+  }
+
+  private consumeShieldHit(current = now()): boolean {
+    const powerUp = this.currentActivePowerUp(current);
+    if (powerUp?.id !== "shield" || !powerUp.shieldHitsRemaining || powerUp.shieldHitsRemaining <= 0) return false;
+    powerUp.shieldHitsRemaining -= 1;
+    if (powerUp.shieldHitsRemaining <= 0) {
+      this.activePowerUp = null;
+    }
+    return true;
+  }
+
   private removePlayer(playerId: string): boolean {
     const player = this.players.get(playerId);
     if (!player) return false;
@@ -809,6 +894,7 @@ class WasdRoom extends Room {
       timerElapsedMs: this.currentTimerElapsedMs(current),
       timerRunning: this.timerRunning,
       levelTransition: this.levelTransition,
+      activePowerUp: this.currentActivePowerUp(current),
       serverTime: current,
       obstaclePositions
     };
@@ -819,6 +905,7 @@ class WasdRoom extends Room {
     this.pauseTimer();
     this.roomState = "round_end";
     this.levelTransition = null;
+    this.activePowerUp = null;
     this.inputState = emptyInputState();
     this.roundResult = {
       outcome: "fail",
@@ -847,6 +934,7 @@ class WasdRoom extends Room {
     });
     this.roomState = "round_end";
     this.levelTransition = null;
+    this.activePowerUp = null;
     this.inputState = emptyInputState();
     this.roundResult = {
       outcome: "win",
@@ -872,7 +960,7 @@ class WasdRoom extends Room {
     this.level = loaded.level;
     this.level.moveSpeed = moveSpeed;
     this.collisionRects = loaded.collisionRects;
-    this.teamPosition = { ...loaded.level.spawn };
+    this.teamPosition = this.debugInitialSpawn();
     this.inputState = emptyInputState();
     this.collectedCollectibleIds.clear();
     this.score = 0;
@@ -905,11 +993,12 @@ class WasdRoom extends Room {
 
       this.clock.setTimeout(() => {
         if (this.roomState !== "level_transition" || this.levelTransition?.toLevelId !== toLevelId) return;
+        const shouldChoosePower = this.isPowerChoiceTransition(this.levelTransition.fromLevelId, toLevelId);
         if (!this.loadLevelAtIndex(nextLevelIndex)) {
           this.markRoundWin();
           return;
         }
-        this.roomState = "playing";
+        this.roomState = shouldChoosePower ? "power_choice" : "playing";
         this.levelTransition = null;
         this.inputState = emptyInputState();
         this.emitRoomState();
@@ -924,11 +1013,12 @@ class WasdRoom extends Room {
     this.roomState = "lobby";
     this.roundResult = undefined;
     this.levelTransition = null;
+    this.activePowerUp = null;
     this.resetTimer();
     this.loadLevelAtIndex(this.startLevelIndex);
     this.tick = 0;
     this.inputState = emptyInputState();
-    this.teamPosition = { ...this.level.spawn };
+    this.teamPosition = this.debugInitialSpawn();
     this.collectedCollectibleIds.clear();
     this.score = 0;
 
@@ -952,11 +1042,12 @@ class WasdRoom extends Room {
     this.roomState = "playing";
     this.roundResult = undefined;
     this.levelTransition = null;
+    this.activePowerUp = null;
     this.resetTimer();
     this.loadLevelAtIndex(this.startLevelIndex);
     this.tick = 0;
     this.inputState = emptyInputState();
-    this.teamPosition = { ...this.level.spawn };
+    this.teamPosition = this.debugInitialSpawn();
     this.collectedCollectibleIds.clear();
     this.score = 0;
     this.emitRoomState();
@@ -985,7 +1076,8 @@ class WasdRoom extends Room {
       return false;
     };
 
-    const nextX = clampX(this.teamPosition.x + direction.x * this.level.moveSpeed * dt);
+    const moveSpeed = this.level.moveSpeed * this.movementSpeedMultiplier();
+    const nextX = clampX(this.teamPosition.x + direction.x * moveSpeed * dt);
     if (collidesAt(nextX, this.teamPosition.y)) {
       this.respawnAtSpawn();
       return false;
@@ -993,7 +1085,7 @@ class WasdRoom extends Room {
     this.teamPosition.x = nextX;
     moved = moved || Math.abs(this.teamPosition.x - startedAt.x) > 0.001;
 
-    const nextY = clampY(this.teamPosition.y + direction.y * this.level.moveSpeed * dt);
+    const nextY = clampY(this.teamPosition.y + direction.y * moveSpeed * dt);
     if (collidesAt(this.teamPosition.x, nextY)) {
       this.respawnAtSpawn();
       return moved;
@@ -1015,17 +1107,19 @@ class WasdRoom extends Room {
 
   private updateMovingObstacles() {
     const elapsedSeconds = this.tick / tickRate;
+    const speedMultiplier = this.obstacleSpeedMultiplier();
     for (const obstacle of this.level.obstacles) {
       if ((obstacle.kind !== "hazard" && obstacle.kind !== "tumbleweed" && obstacle.kind !== "snowball" && obstacle.kind !== "fireball") || !obstacle.movement || !obstacle.origin) continue;
+      const obstacleSpeed = (obstacle.speed ?? 2.2) * speedMultiplier;
       if (obstacle.movement === "circular") {
-        const angle = elapsedSeconds * (obstacle.speed ?? 2.2) + (obstacle.phase ?? 0);
+        const angle = elapsedSeconds * obstacleSpeed + (obstacle.phase ?? 0);
         const radius = obstacle.amplitude ?? 192;
         obstacle.position = {
           x: obstacle.origin.x + Math.cos(angle) * radius,
           y: obstacle.origin.y + Math.sin(angle) * radius
         };
       } else {
-        const progress = (1 - Math.cos(elapsedSeconds * (obstacle.speed ?? 2.2) + (obstacle.phase ?? 0))) / 2;
+        const progress = (1 - Math.cos(elapsedSeconds * obstacleSpeed + (obstacle.phase ?? 0))) / 2;
         const offset = progress * (obstacle.amplitude ?? 192);
         if (obstacle.movement === "horizontal") {
           obstacle.position = { x: obstacle.origin.x + offset, y: obstacle.origin.y };
@@ -1034,6 +1128,24 @@ class WasdRoom extends Room {
         }
       }
     }
+  }
+
+  private debugInitialSpawn(): { x: number; y: number } {
+    if (!this.debugSpawnNearGoal || this.level.collectibles.length === 0) {
+      return { ...this.level.spawn };
+    }
+    const goal = this.level.obstacles.find((o) => o.kind === "goal");
+    if (!goal) return { ...this.level.spawn };
+    const goalCenter = {
+      x: goal.position.x + goal.size.x / 2,
+      y: goal.position.y + goal.size.y / 2
+    };
+    const nearest = this.level.collectibles.reduce((best, c) => {
+      const bestDist = Math.hypot(goalCenter.x - best.position.x, goalCenter.y - best.position.y);
+      const cDist = Math.hypot(goalCenter.x - c.position.x, goalCenter.y - c.position.y);
+      return cDist < bestDist ? c : best;
+    });
+    return { ...nearest.position };
   }
 
   private respawnAtSpawn() {
@@ -1051,10 +1163,23 @@ class WasdRoom extends Room {
   }
 
   private resolveHazardCollision(): boolean {
+    if (this.debugInvincible) return false;
+    const current = now();
     for (const obstacle of this.level.obstacles) {
       if (obstacle.kind !== "hazard" && obstacle.kind !== "tumbleweed" && obstacle.kind !== "snowball" && obstacle.kind !== "fireball") continue;
-      const hit = circlesIntersectsRect(this.teamPosition, this.level.playerRadius, obstacle.position, obstacle.size);
+      // `teamPosition` is treated as the character's "feet" point.
+      // Shift the collision center upward so head hits register correctly.
+      const collisionCenter = {
+        x: this.teamPosition.x,
+        y: this.teamPosition.y - this.level.playerRadius * 0.9
+      };
+      const hit = circlesIntersectsRect(collisionCenter, this.level.playerRadius, obstacle.position, obstacle.size);
       if (!hit) continue;
+      if (this.consumeShieldHit(current)) {
+        this.respawnAtSpawn();
+        this.emitSnapshot(true);
+        return false;
+      }
       return true;
     }
     return false;
@@ -1123,7 +1248,8 @@ class WasdRoom extends Room {
     this.collectOverlappingCollectibles();
 
     if (this.resolveHazardCollision()) {
-      this.markRoundFail("trap_hit");
+      this.respawnAtSpawn();
+      this.emitSnapshot(true);
       return;
     }
     if (this.resolveGoalCollision()) {
@@ -1153,6 +1279,7 @@ async function currentRoomSummaries(): Promise<LobbyRoomSummary[]> {
         metadata?.roomState === "playing" ||
         metadata?.roomState === "countdown" ||
         metadata?.roomState === "level_transition" ||
+        metadata?.roomState === "power_choice" ||
         metadata?.roomState === "round_end"
           ? metadata.roomState
           : "lobby";
@@ -1297,6 +1424,118 @@ app.get("/rooms/:roomCode", async (req, res) => {
     return;
   }
   res.json({ roomId: matched.roomId, roomCode });
+});
+
+app.post("/share", (req, res) => {
+  try {
+    const raw = (req as unknown as { _rawbody?: Buffer })._rawbody;
+    if (!raw || raw.length === 0) {
+      res.status(400).json({ error: "Empty body." });
+      return;
+    }
+    const payload = JSON.parse(raw.toString("utf-8")) as {
+      image?: string;
+      teamName?: string;
+      completionMs?: number;
+      leaderboardRank?: number | null;
+    };
+    if (!payload.image || typeof payload.image !== "string") {
+      res.status(400).json({ error: "Missing image." });
+      return;
+    }
+    const match = payload.image.match(/^data:image\/png;base64,(.+)$/);
+    if (!match) {
+      res.status(400).json({ error: "Invalid image format. Expected PNG data URI." });
+      return;
+    }
+    const imageBuffer = Buffer.from(match[1], "base64");
+    if (imageBuffer.length > maxShareImageBytes) {
+      res.status(413).json({ error: "Image too large." });
+      return;
+    }
+    const id = randomUUID().replace(/-/g, "").slice(0, 16);
+    const imagePath = path.join(shareDir, `${id}.png`);
+    writeFileSync(imagePath, imageBuffer);
+    const record: ShareRecord = {
+      id,
+      teamName: typeof payload.teamName === "string" ? payload.teamName.slice(0, 100) : "Unknown Team",
+      completionMs: typeof payload.completionMs === "number" ? payload.completionMs : 0,
+      leaderboardRank: typeof payload.leaderboardRank === "number" ? payload.leaderboardRank : null,
+      createdAt: new Date().toISOString()
+    };
+    shareRecords.set(id, record);
+    res.json({ id, url: `/share/${id}` });
+  } catch {
+    res.status(400).json({ error: "Invalid request." });
+  }
+});
+
+app.get("/share/:id/image", (req, res) => {
+  const id = String(req.params.id ?? "");
+  if (!shareRecords.has(id)) {
+    res.status(404).json({ error: "Not found." });
+    return;
+  }
+  const imagePath = path.join(shareDir, `${id}.png`);
+  if (!existsSync(imagePath)) {
+    res.status(404).json({ error: "Image not found." });
+    return;
+  }
+  const imageData = readFileSync(imagePath);
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.send(imageData);
+});
+
+app.get("/share/:id", (req, res) => {
+  const id = String(req.params.id ?? "");
+  const record = shareRecords.get(id);
+  if (!record) {
+    res.status(404).type("html").send("<!doctype html><html><body><p>Share not found.</p></body></html>");
+    return;
+  }
+  const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] ?? c));
+  const fmtTime = (ms: number) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    const centis = Math.floor((ms % 1000) / 10);
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(centis).padStart(2, "0")}`;
+  };
+  const teamName = esc(record.teamName);
+  const timeText = fmtTime(record.completionMs);
+  const rankText = record.leaderboardRank ? `#${record.leaderboardRank}` : "Unranked";
+  const title = `${record.teamName} completed Chaosey in ${timeText}!`;
+  const description = `Leaderboard rank: ${rankText}. Can you beat them?`;
+  const serverOrigin = `http://0.0.0.0:${port}`;
+  const httpOrigin = (process.env.SERVER_PUBLIC_URL ?? serverOrigin).replace(/\/$/, "");
+  const absoluteImageUrl = `${httpOrigin}/share/${id}/image`;
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${esc(title)}</title>
+  <meta property="og:title" content="${esc(title)}" />
+  <meta property="og:description" content="${esc(description)}" />
+  <meta property="og:image" content="${esc(absoluteImageUrl)}" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${esc(title)}" />
+  <meta name="twitter:description" content="${esc(description)}" />
+  <meta name="twitter:image" content="${esc(absoluteImageUrl)}" />
+</head>
+<body style="margin:0;background:#090b12;color:#eef2ff;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+  <div style="text-align:center;max-width:600px;padding:24px;">
+    <h1 style="font-size:2rem;margin-bottom:8px;">${teamName} completed Chaosey!</h1>
+    <p style="font-size:1.2rem;color:#94a3b8;">Time: ${esc(timeText)} &middot; Rank: ${esc(rankText)}</p>
+    <img src="/share/${esc(id)}/image" alt="Completion screenshot" style="width:100%;border-radius:12px;margin:24px 0;" />
+    <p><a href="${esc(clientOrigin)}" style="color:#818cf8;">Play Chaosey</a></p>
+  </div>
+</body>
+</html>`);
 });
 
 const gameServer = new Server({ transport });

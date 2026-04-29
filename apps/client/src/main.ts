@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { Client, type Room } from "colyseus.js";
+import html2canvas from "html2canvas";
 import { mapKeyToRole } from "./lib/input";
 import type {
   GameState,
@@ -7,6 +8,7 @@ import type {
   LevelData,
   LevelLoadedPayload,
   LobbyRoomSummary,
+  PowerUpId,
   PlayerRole,
   RoomVisibility,
   RoundResult,
@@ -24,6 +26,8 @@ const stateEl = document.getElementById("state") as HTMLDivElement;
 const playersEl = document.getElementById("players") as HTMLDivElement;
 const latencyEl = document.getElementById("latency") as HTMLDivElement;
 const debugSoloEl = document.getElementById("debugSolo") as HTMLInputElement;
+const debugInvincibleEl = document.getElementById("debugInvincible") as HTMLInputElement;
+const debugSpawnNearGoalEl = document.getElementById("debugSpawnNearGoal") as HTMLInputElement;
 const debugMoveSpeedEl = document.getElementById("debugMoveSpeed") as HTMLSelectElement;
 const debugLevelIdEl = document.getElementById("debugLevelId") as HTMLSelectElement;
 const playerNameEl = document.getElementById("playerName") as HTMLInputElement;
@@ -63,6 +67,9 @@ const levelTransitionOverlayEl = document.getElementById("levelTransitionOverlay
 const levelTransitionTitleEl = document.getElementById("levelTransitionTitle") as HTMLDivElement;
 const levelTransitionSubtitleEl = document.getElementById("levelTransitionSubtitle") as HTMLDivElement;
 const levelTransitionBodyEl = document.getElementById("levelTransitionBody") as HTMLDivElement;
+const powerChoiceOverlayEl = document.getElementById("powerChoiceOverlay") as HTMLElement;
+const powerChoiceCardsEl = document.getElementById("powerChoiceCards") as HTMLDivElement;
+const activePowerUpEl = document.getElementById("activePowerUp") as HTMLDivElement;
 const timerEl = document.getElementById("timer") as HTMLDivElement;
 const scoreEl = document.getElementById("scoreText") as HTMLSpanElement;
 const rosterEl = document.getElementById("hudRoster") as HTMLDivElement;
@@ -95,6 +102,7 @@ let lastPingSentAt = 0;
 let lastPongAt = 0;
 let currentVisibility: RoomVisibility = "public";
 let currentDebugSolo = false;
+let currentDebugInvincible = false;
 let myRoomId = "";
 let availableRooms: LobbyRoomSummary[] = [];
 let previousPlayerCount = 0;
@@ -124,6 +132,36 @@ const tumbleweedMarkerLayerPattern = /^tumbleweed_(left|right|up|down|circle)(?:
 const snowballMarkerLayerPattern = /^snowball_(left|right|up|down|circle)(?:_|$)/;
 const fireballMarkerLayerPattern = /^fireball_(left|right|up|down|circle)(?:_|$)/;
 
+const powerUpOptions: Array<{
+  id: PowerUpId;
+  eyebrow: string;
+  title: string;
+  description: string;
+  stat: string;
+}> = [
+  {
+    id: "speed_boost",
+    eyebrow: "Rush",
+    title: "Speed +25%",
+    description: "Move faster through the opening stretch of the final level.",
+    stat: "30 sec"
+  },
+  {
+    id: "obstacle_slow",
+    eyebrow: "Control",
+    title: "Slow Obstacles",
+    description: "All moving hazards run at half speed while your team finds the route.",
+    stat: "20 sec"
+  },
+  {
+    id: "shield",
+    eyebrow: "Survive",
+    title: "Two-Hit Shield",
+    description: "Block the next two obstacle hits before the final push gets dangerous.",
+    stat: "30 sec"
+  }
+];
+
 let game: Phaser.Game | null = null;
 let gameBootPromise: Promise<void> | null = null;
 let gameBootResolve: (() => void) | null = null;
@@ -135,6 +173,7 @@ let roleRevealTimeout: ReturnType<typeof setTimeout> | null = null;
 let finalCompletionMs: number | null = null;
 let latestCongratsResult: RoundResult | null = null;
 let latestCongratsTeam = "";
+let capturedCongratsImage: string | null = null;
 let pendingDieAnimation:
   | {
       position: { x: number; y: number };
@@ -193,6 +232,7 @@ function showMenu(status = "") {
   setVisibility(lobbyOverlayEl, false);
   setVisibility(roleRevealOverlayEl, false);
   setVisibility(levelTransitionOverlayEl, false);
+  setVisibility(powerChoiceOverlayEl, false);
   hideCongratsScreen();
   if (roleRevealTimeout) {
     clearTimeout(roleRevealTimeout);
@@ -219,6 +259,7 @@ function showHud() {
   setVisibility(menuScreenEl, false);
   setVisibility(loadingScreenEl, false);
   setVisibility(hudEl, true);
+  setVisibility(powerChoiceOverlayEl, false);
   hideCongratsScreen();
   menuStatusEl.textContent = "";
   updateLobbyOverlay();
@@ -269,9 +310,13 @@ function updateDebugSpeedControl() {
   const debugEnabled = debugSoloEl.checked;
   debugMoveSpeedEl.disabled = !debugEnabled;
   debugLevelIdEl.disabled = !debugEnabled;
+  debugInvincibleEl.disabled = !debugEnabled;
+  debugSpawnNearGoalEl.disabled = !debugEnabled;
   if (!debugSoloEl.checked) {
     debugMoveSpeedEl.value = String(defaultMoveSpeed);
     debugLevelIdEl.value = DEFAULT_LEVEL_ID;
+    debugInvincibleEl.checked = false;
+    debugSpawnNearGoalEl.checked = false;
   }
 }
 
@@ -728,7 +773,7 @@ function updateScoreDisplay() {
   if (!scoreEl) return;
   const collected = latestState?.score ?? 0;
   const total = latestState?.level.collectibles.length ?? 0;
-  scoreEl.textContent = `${collected} / ${total}`;
+  scoreEl.textContent = `${collected}/${total}`;
 }
 
 function connectedPlayers() {
@@ -768,11 +813,13 @@ function hideCongratsScreen() {
   setVisibility(congratsOverlayEl, false);
   latestCongratsResult = null;
   latestCongratsTeam = "";
+  capturedCongratsImage = null;
 }
 
 function showCongratsScreen(result: RoundResult) {
   latestCongratsResult = result;
   latestCongratsTeam = resultTeamDisplay(result);
+  capturedCongratsImage = null;
   congratsTeamEl.textContent = latestCongratsTeam;
   congratsTimeEl.textContent = formatTime(result.completionMs ?? 0);
   congratsRankEl.textContent = result.leaderboardRank ? `#${result.leaderboardRank}` : "Unranked";
@@ -786,6 +833,16 @@ function showCongratsScreen(result: RoundResult) {
   congratsOverlayEl.style.animation = "none";
   void congratsOverlayEl.offsetWidth;
   congratsOverlayEl.style.animation = "";
+
+  setTimeout(() => {
+    html2canvas(congratsOverlayEl, { backgroundColor: null, scale: 1 })
+      .then((canvas) => {
+        capturedCongratsImage = canvas.toDataURL("image/png");
+      })
+      .catch(() => {
+        capturedCongratsImage = null;
+      });
+  }, 600);
 }
 
 function escapeHtml(value: string) {
@@ -1030,6 +1087,7 @@ class MainScene extends Phaser.Scene {
     this.playerSprite.setDepth(200);
     this.playerSprite.setDisplaySize(128, 128);
     this.playerSprite.setOrigin(0.5, 0.82);
+    this.playerSprite.setVisible(true);
     this.dieSprite = this.add.sprite(initialSpawn.x, initialSpawn.y, explosionSheetKey, 1);
     this.dieSprite.setDepth(320);
     this.dieSprite.setDisplaySize(220, 220);
@@ -1631,16 +1689,26 @@ function openLeaderboardModal() {
 function attachTouch() {
   for (const button of touchButtons) {
     const role = button.dataset.role as PlayerRole;
-    button.addEventListener("pointerdown", () => {
+    button.addEventListener("contextmenu", (event) => event.preventDefault());
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      button.setPointerCapture(event.pointerId);
       unlockAudio();
       if (!myRoles.includes(role)) return;
       handlePress(role);
     });
-    button.addEventListener("pointerup", () => {
+    button.addEventListener("pointerup", (event) => {
+      event.preventDefault();
+      if (button.hasPointerCapture(event.pointerId)) {
+        button.releasePointerCapture(event.pointerId);
+      }
       if (!myRoles.includes(role)) return;
       handleRelease(role);
     });
-    button.addEventListener("pointercancel", () => {
+    button.addEventListener("pointercancel", (event) => {
+      if (button.hasPointerCapture(event.pointerId)) {
+        button.releasePointerCapture(event.pointerId);
+      }
       if (!myRoles.includes(role)) return;
       handleRelease(role);
     });
@@ -1754,6 +1822,8 @@ function bindRoom(room: Room) {
           position: { ...previousState.teamPosition },
           keepPlayerHidden: false
         };
+        // Hazard respawns happen during the "playing" state, so clear any previous round result UI.
+        latestResult = null;
       }
     }
     targetTeamPosition = { ...state.teamPosition };
@@ -1818,6 +1888,7 @@ function bindRoom(room: Room) {
     latestState = null;
     currentLevel = null;
     latestResult = null;
+    currentDebugInvincible = false;
     myRoles = [];
     myPlayerId = "";
     roomCode = "";
@@ -1849,6 +1920,7 @@ async function quitToMenu() {
   latestState = null;
   currentLevel = null;
   latestResult = null;
+  currentDebugInvincible = false;
   myRoles = [];
   myPlayerId = "";
   roomCode = "";
@@ -1878,6 +1950,12 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
     resetConnectionStats();
     const playerName = selectedPlayerName();
     currentDebugSolo = isDebugCreatePath && Boolean(debugSoloEl.checked) && !options.roomId && !options.roomCode;
+    currentDebugInvincible =
+      isDebugCreatePath &&
+      Boolean(debugSoloEl.checked) &&
+      Boolean(debugInvincibleEl.checked) &&
+      !options.roomId &&
+      !options.roomCode;
 
     if (options.roomId) {
       currentRoom = await colyseus.joinById(options.roomId, { reconnectPlayerId, playerName });
@@ -1898,6 +1976,8 @@ async function enterRoom(options: { visibility?: RoomVisibility; roomId?: string
         debugSolo: currentDebugSolo,
         debugMoveSpeed: isDebugCreatePath ? selectedDebugMoveSpeed() : undefined,
         debugLevelId: isDebugCreatePath ? selectedDebugLevelId() : undefined,
+        debugInvincible: currentDebugInvincible,
+        debugSpawnNearGoal: isDebugCreatePath && Boolean(debugSoloEl.checked) && Boolean(debugSpawnNearGoalEl.checked),
         playerName,
         visibility: currentVisibility
       });
@@ -1999,14 +2079,56 @@ lobbyStartGameEl.onclick = startGame;
 quitGameEl.onclick = () => void quitToMenu();
 congratsCloseEl.onclick = () => void quitToMenu();
 shareResultXEl.onclick = () => {
-  const shareUrl = latestCongratsResult
-    ? shareUrlForResult(latestCongratsResult, latestCongratsTeam || resultTeamDisplay(latestCongratsResult))
-    : shareResultXEl.dataset.shareUrl;
-  if (!shareUrl) return;
-  const opened = window.open(shareUrl, "_blank", "noopener,noreferrer");
-  if (!opened) {
-    window.location.href = shareUrl;
+  const result = latestCongratsResult;
+  const teamDisplay = latestCongratsTeam || (result ? resultTeamDisplay(result) : "");
+
+  if (!capturedCongratsImage || !result) {
+    const shareUrl = result
+      ? shareUrlForResult(result, teamDisplay)
+      : shareResultXEl.dataset.shareUrl;
+    if (!shareUrl) return;
+    const opened = window.open(shareUrl, "_blank", "noopener,noreferrer");
+    if (!opened) window.location.href = shareUrl;
+    return;
   }
+
+  const originalText = shareResultXEl.textContent;
+  shareResultXEl.textContent = "Uploading...";
+  shareResultXEl.disabled = true;
+
+  fetch(`${httpServerUrl}/share`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image: capturedCongratsImage,
+      teamName: teamDisplay,
+      completionMs: result.completionMs ?? 0,
+      leaderboardRank: result.leaderboardRank ?? null
+    })
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error("Upload failed");
+      return res.json() as Promise<{ id: string; url: string }>;
+    })
+    .then(({ url }) => {
+      const sharePageUrl = `${httpServerUrl}${url}`;
+      const timeText = formatTime(result.completionMs ?? 0);
+      const rankText = result.leaderboardRank ? `#${result.leaderboardRank}` : "Unranked";
+      const text = `${teamDisplay} completed Chaosey in ${timeText} with leaderboard rank ${rankText}. Can you beat us?`;
+      const params = new URLSearchParams({ text, url: sharePageUrl });
+      const tweetUrl = `https://twitter.com/intent/tweet?${params.toString()}`;
+      const opened = window.open(tweetUrl, "_blank", "noopener,noreferrer");
+      if (!opened) window.location.href = tweetUrl;
+    })
+    .catch(() => {
+      const shareUrl = shareUrlForResult(result, teamDisplay);
+      const opened = window.open(shareUrl, "_blank", "noopener,noreferrer");
+      if (!opened) window.location.href = shareUrl;
+    })
+    .finally(() => {
+      shareResultXEl.textContent = originalText;
+      shareResultXEl.disabled = false;
+    });
 };
 
 visibilityPublicEl.onclick = () => setSelectedVisibility("public");

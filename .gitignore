@@ -5,3 +5,4 @@ coverage
 .vite
 .DS_Store
 .env
+.share-uploads

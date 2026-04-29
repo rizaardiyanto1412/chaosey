@@ -13,6 +13,7 @@
   "dependencies": {
     "@wasd/shared": "0.1.0",
     "colyseus.js": "0.16.5",
+    "html2canvas": "^1.4.1",
     "phaser": "^3.90.0",
     "serve": "^14.2.4"
   },

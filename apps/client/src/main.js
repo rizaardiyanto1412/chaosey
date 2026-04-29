@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { Client } from "colyseus.js";
+import html2canvas from "html2canvas";
 import { mapKeyToRole } from "./lib/input";
 import { DEFAULT_LEVEL_ID } from "@wasd/shared";
 const serverUrl = import.meta.env.VITE_SERVER_URL ?? "ws://localhost:3001";
@@ -11,6 +12,8 @@ const stateEl = document.getElementById("state");
 const playersEl = document.getElementById("players");
 const latencyEl = document.getElementById("latency");
 const debugSoloEl = document.getElementById("debugSolo");
+const debugInvincibleEl = document.getElementById("debugInvincible");
+const debugSpawnNearGoalEl = document.getElementById("debugSpawnNearGoal");
 const debugMoveSpeedEl = document.getElementById("debugMoveSpeed");
 const debugLevelIdEl = document.getElementById("debugLevelId");
 const playerNameEl = document.getElementById("playerName");
@@ -57,6 +60,12 @@ const hudSoundToggleEl = document.getElementById("hudSoundToggle");
 const menuSoundToggleEl = document.getElementById("menuSoundToggle");
 const leaderboardModalEl = document.getElementById("leaderboardModal");
 const leaderboardListEl = document.getElementById("leaderboardList");
+const congratsOverlayEl = document.getElementById("congratsOverlay");
+const congratsTeamEl = document.getElementById("congratsTeam");
+const congratsTimeEl = document.getElementById("congratsTime");
+const congratsRankEl = document.getElementById("congratsRank");
+const shareResultXEl = document.getElementById("shareResultX");
+const congratsCloseEl = document.getElementById("congratsClose");
 const touchButtons = document.querySelectorAll("[data-role]");
 const persistedRoomKey = "key-chaos.active-room";
 const defaultMoveSpeed = 160;
@@ -74,6 +83,7 @@ let lastPingSentAt = 0;
 let lastPongAt = 0;
 let currentVisibility = "public";
 let currentDebugSolo = false;
+let currentDebugInvincible = false;
 let myRoomId = "";
 let availableRooms = [];
 let previousPlayerCount = 0;
@@ -106,12 +116,16 @@ let hostStartPending = false;
 let previousRoomState = null;
 let roleRevealTimeout = null;
 let finalCompletionMs = null;
+let latestCongratsResult = null;
+let latestCongratsTeam = "";
+let capturedCongratsImage = null;
 let pendingDieAnimation = null;
 let audioContext = null;
 let soundtrackAudio = null;
 let lobbyAudio = null;
 let currentSoundtrackLevel = null;
-let isSoundtrackFading = false;
+let soundtrackFadeInterval = null;
+let soundtrackPlaybackToken = 0;
 const mutePrefKey = "key-chaos.muted";
 let isMuted = (() => {
     try {
@@ -144,6 +158,7 @@ function showMenu(status = "") {
     setVisibility(lobbyOverlayEl, false);
     setVisibility(roleRevealOverlayEl, false);
     setVisibility(levelTransitionOverlayEl, false);
+    hideCongratsScreen();
     if (roleRevealTimeout) {
         clearTimeout(roleRevealTimeout);
         roleRevealTimeout = null;
@@ -160,12 +175,14 @@ function showLoading(label) {
     setVisibility(loadingScreenEl, true);
     setVisibility(menuScreenEl, false);
     setVisibility(lobbyOverlayEl, false);
+    hideCongratsScreen();
 }
 function showHud() {
     hasEnteredGame = true;
     setVisibility(menuScreenEl, false);
     setVisibility(loadingScreenEl, false);
     setVisibility(hudEl, true);
+    hideCongratsScreen();
     menuStatusEl.textContent = "";
     updateLobbyOverlay();
 }
@@ -213,9 +230,13 @@ function updateDebugSpeedControl() {
     const debugEnabled = debugSoloEl.checked;
     debugMoveSpeedEl.disabled = !debugEnabled;
     debugLevelIdEl.disabled = !debugEnabled;
+    debugInvincibleEl.disabled = !debugEnabled;
+    debugSpawnNearGoalEl.disabled = !debugEnabled;
     if (!debugSoloEl.checked) {
         debugMoveSpeedEl.value = String(defaultMoveSpeed);
         debugLevelIdEl.value = DEFAULT_LEVEL_ID;
+        debugInvincibleEl.checked = false;
+        debugSpawnNearGoalEl.checked = false;
     }
 }
 function selectedDebugMoveSpeed() {
@@ -372,39 +393,68 @@ function playCoinSound() {
     oscillator.start(startedAt);
     oscillator.stop(startedAt + duration);
 }
+function getSoundtrackLevelNumber(levelId) {
+    const match = levelId.match(/\d+/);
+    if (!match)
+        return null;
+    const levelNum = Number.parseInt(match[0], 10);
+    return Number.isFinite(levelNum) ? levelNum : null;
+}
 function getSoundtrackForLevel(levelId) {
-    const levelNum = parseInt(levelId.replace(/\D/g, ""), 10);
+    const levelNum = getSoundtrackLevelNumber(levelId);
+    if (levelNum === null)
+        return null;
     if (levelNum >= 1 && levelNum <= 3)
         return "/assets/sounds/1-3.mp3";
     if (levelNum >= 4 && levelNum <= 6)
         return "/assets/sounds/4-6.mp3";
     if (levelNum >= 7 && levelNum <= 9)
         return "/assets/sounds/7-9.mp3";
-    return "/assets/sounds/10.mp3";
+    if (levelNum === 10)
+        return "/assets/sounds/10.mp3";
+    return null;
 }
 function getSoundtrackGroup(levelId) {
-    const levelNum = parseInt(levelId.replace(/\D/g, ""), 10);
+    const levelNum = getSoundtrackLevelNumber(levelId);
+    if (levelNum === null)
+        return null;
     if (levelNum >= 1 && levelNum <= 3)
         return "1-3";
     if (levelNum >= 4 && levelNum <= 6)
         return "4-6";
     if (levelNum >= 7 && levelNum <= 9)
         return "7-9";
-    return "10";
+    if (levelNum === 10)
+        return "10";
+    return null;
+}
+function clearSoundtrackFadeInterval() {
+    if (!soundtrackFadeInterval)
+        return;
+    clearInterval(soundtrackFadeInterval);
+    soundtrackFadeInterval = null;
 }
 async function playSoundtrack(levelId) {
     const soundtrackFile = getSoundtrackForLevel(levelId);
     const newGroup = getSoundtrackGroup(levelId);
+    if (!soundtrackFile || !newGroup) {
+        console.warn("[Soundtrack] No soundtrack for level", levelId);
+        stopSoundtrack();
+        return;
+    }
     console.log("[Soundtrack] Playing", soundtrackFile, "for level", levelId, "group", newGroup);
-    if (currentSoundtrackLevel && getSoundtrackGroup(currentSoundtrackLevel) === newGroup) {
+    if (soundtrackAudio && currentSoundtrackLevel && getSoundtrackGroup(currentSoundtrackLevel) === newGroup) {
         console.log("[Soundtrack] Same group, skipping");
         return;
     }
     if (soundtrackAudio) {
-        await stopSoundtrack();
+        stopSoundtrack();
     }
     const audio = new Audio(soundtrackFile);
+    const playbackToken = soundtrackPlaybackToken + 1;
+    soundtrackPlaybackToken = playbackToken;
     soundtrackAudio = audio;
+    currentSoundtrackLevel = levelId;
     audio.loop = true;
     audio.volume = 0;
     audio.addEventListener("canplaythrough", () => {
@@ -418,51 +468,54 @@ async function playSoundtrack(levelId) {
     });
     try {
         await audio.play();
+        if (soundtrackPlaybackToken !== playbackToken || soundtrackAudio !== audio) {
+            audio.pause();
+            return;
+        }
         console.log("[Soundtrack] Play started successfully");
     }
     catch (err) {
+        if (soundtrackAudio === audio) {
+            soundtrackAudio = null;
+            currentSoundtrackLevel = null;
+        }
         console.error("[Soundtrack] Play error:", err);
         return;
     }
+    clearSoundtrackFadeInterval();
     const fadeInDuration = 3000;
     const startTime = Date.now();
     const fadeInterval = setInterval(() => {
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(elapsed / fadeInDuration, 1);
-        if (soundtrackAudio) {
-            soundtrackAudio.volume = isMuted ? 0 : progress * soundtrackBaseVolume;
-        }
-        if (progress >= 1) {
+        if (soundtrackPlaybackToken !== playbackToken || soundtrackAudio !== audio) {
             clearInterval(fadeInterval);
-        }
-    }, 50);
-    currentSoundtrackLevel = levelId;
-    isSoundtrackFading = false;
-}
-async function stopSoundtrack() {
-    if (!soundtrackAudio)
-        return;
-    isSoundtrackFading = true;
-    const audio = soundtrackAudio;
-    const startVolume = audio.volume;
-    const fadeOutDuration = 3000;
-    const startTime = Date.now();
-    const fadeInterval = setInterval(() => {
-        if (soundtrackAudio !== audio) {
-            clearInterval(fadeInterval);
+            if (soundtrackFadeInterval === fadeInterval) {
+                soundtrackFadeInterval = null;
+            }
             return;
         }
         const elapsed = Date.now() - startTime;
-        const progress = Math.min(elapsed / fadeOutDuration, 1);
-        audio.volume = startVolume * (1 - progress);
+        const progress = Math.min(elapsed / fadeInDuration, 1);
+        audio.volume = isMuted ? 0 : progress * soundtrackBaseVolume;
         if (progress >= 1) {
             clearInterval(fadeInterval);
-            audio.pause();
-            soundtrackAudio = null;
-            currentSoundtrackLevel = null;
-            isSoundtrackFading = false;
+            if (soundtrackFadeInterval === fadeInterval) {
+                soundtrackFadeInterval = null;
+            }
         }
     }, 50);
+    soundtrackFadeInterval = fadeInterval;
+}
+function stopSoundtrack() {
+    soundtrackPlaybackToken += 1;
+    clearSoundtrackFadeInterval();
+    if (!soundtrackAudio) {
+        currentSoundtrackLevel = null;
+        return;
+    }
+    const audio = soundtrackAudio;
+    soundtrackAudio = null;
+    currentSoundtrackLevel = null;
+    audio.pause();
 }
 async function playLobbySound() {
     if (lobbyAudio) {
@@ -610,6 +663,69 @@ function updateScoreDisplay() {
 }
 function connectedPlayers() {
     return latestState?.players.filter((player) => player.connected) ?? [];
+}
+function fallbackTeamName() {
+    return roomCode ? `Team ${roomCode}` : "Team Chaosey";
+}
+function resultPlayerNames(result) {
+    const names = result?.playerNames?.map((name) => name.trim()).filter(Boolean);
+    if (names && names.length > 0)
+        return names;
+    const connectedNames = connectedPlayers().map((player) => player.name.trim()).filter(Boolean);
+    return connectedNames.length > 0 ? connectedNames : [fallbackTeamName()];
+}
+function resultTeamDisplay(result) {
+    const teamName = result?.teamName?.trim();
+    if (teamName)
+        return teamName;
+    return resultPlayerNames(result).join(", ");
+}
+function shareUrlForResult(result, teamDisplay) {
+    const timeText = formatTime(result.completionMs ?? 0);
+    const rankText = result.leaderboardRank ? `#${result.leaderboardRank}` : "Unranked";
+    const text = `${teamDisplay} completed Chaosey in ${timeText} with leaderboard rank ${rankText}. Can you beat us?`;
+    const params = new URLSearchParams({ text });
+    const origin = window.location.origin;
+    if (!origin.includes("localhost") && !origin.includes("127.0.0.1")) {
+        params.set("url", origin);
+    }
+    return `https://twitter.com/intent/tweet?${params.toString()}`;
+}
+function hideCongratsScreen() {
+    setVisibility(congratsOverlayEl, false);
+    latestCongratsResult = null;
+    latestCongratsTeam = "";
+    capturedCongratsImage = null;
+}
+function showCongratsScreen(result) {
+    latestCongratsResult = result;
+    latestCongratsTeam = resultTeamDisplay(result);
+    capturedCongratsImage = null;
+    congratsTeamEl.textContent = latestCongratsTeam;
+    congratsTimeEl.textContent = formatTime(result.completionMs ?? 0);
+    congratsRankEl.textContent = result.leaderboardRank ? `#${result.leaderboardRank}` : "Unranked";
+    shareResultXEl.dataset.shareUrl = shareUrlForResult(result, latestCongratsTeam);
+    setVisibility(roleRevealOverlayEl, false);
+    if (roleRevealTimeout) {
+        clearTimeout(roleRevealTimeout);
+        roleRevealTimeout = null;
+    }
+    setVisibility(congratsOverlayEl, true);
+    congratsOverlayEl.style.animation = "none";
+    void congratsOverlayEl.offsetWidth;
+    congratsOverlayEl.style.animation = "";
+    setTimeout(() => {
+        html2canvas(congratsOverlayEl, { backgroundColor: null, scale: 1 })
+            .then((canvas) => {
+            capturedCongratsImage = canvas.toDataURL("image/png");
+        })
+            .catch(() => {
+            capturedCongratsImage = null;
+        });
+    }, 600);
+}
+function escapeHtml(value) {
+    return value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] ?? c));
 }
 function renderRoster() {
     if (!rosterEl)
@@ -844,6 +960,7 @@ class MainScene extends Phaser.Scene {
         this.playerSprite.setDepth(200);
         this.playerSprite.setDisplaySize(128, 128);
         this.playerSprite.setOrigin(0.5, 0.82);
+        this.playerSprite.setVisible(true);
         this.dieSprite = this.add.sprite(initialSpawn.x, initialSpawn.y, explosionSheetKey, 1);
         this.dieSprite.setDepth(320);
         this.dieSprite.setDisplaySize(220, 220);
@@ -1156,6 +1273,7 @@ function showRoleReveal(roles) {
 function showWinReveal(result) {
     if (!roleRevealOverlayEl || !roleRevealKeysEl)
         return;
+    hideCongratsScreen();
     roleRevealKeysEl.innerHTML = "";
     const badge = document.createElement("div");
     badge.className = "role-reveal-key";
@@ -1178,6 +1296,7 @@ function showWinReveal(result) {
 }
 function maybeTriggerRoleReveal(nextRoomState) {
     if (previousRoomState === "lobby" && nextRoomState === "playing") {
+        hideCongratsScreen();
         showRoleReveal(myRoles);
         finalCompletionMs = null;
     }
@@ -1366,15 +1485,17 @@ function renderLeaderboard(entries) {
     }
     leaderboardListEl.innerHTML = entries
         .map((entry, index) => {
-        const rankClass = index === 0 ? "top-1" : index === 1 ? "top-2" : index === 2 ? "top-3" : "";
+        const rank = entry.rank ?? index + 1;
+        const rankClass = rank === 1 ? "top-1" : rank === 2 ? "top-2" : rank === 3 ? "top-3" : "";
         const timeStr = formatTime(entry.completionMs);
         const dateStr = new Date(entry.at).toLocaleDateString();
+        const members = entry.teamName?.trim() || entry.playerNames?.filter(Boolean).join(", ") || "Unknown team";
         return `
         <div class="leaderboard-entry">
-          <div class="leaderboard-rank ${rankClass}">${index + 1}</div>
+          <div class="leaderboard-rank ${rankClass}">${rank}</div>
           <div class="leaderboard-info">
             <div class="leaderboard-time">${timeStr}</div>
-            <div class="leaderboard-meta">${dateStr} • Room ${entry.roomCode}</div>
+            <div class="leaderboard-meta">${dateStr} • Room ${escapeHtml(entry.roomCode)} • ${escapeHtml(members)}</div>
           </div>
           <div class="leaderboard-players">${entry.playerCount}P</div>
         </div>
@@ -1389,18 +1510,28 @@ function openLeaderboardModal() {
 function attachTouch() {
     for (const button of touchButtons) {
         const role = button.dataset.role;
-        button.addEventListener("pointerdown", () => {
+        button.addEventListener("contextmenu", (event) => event.preventDefault());
+        button.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            button.setPointerCapture(event.pointerId);
             unlockAudio();
             if (!myRoles.includes(role))
                 return;
             handlePress(role);
         });
-        button.addEventListener("pointerup", () => {
+        button.addEventListener("pointerup", (event) => {
+            event.preventDefault();
+            if (button.hasPointerCapture(event.pointerId)) {
+                button.releasePointerCapture(event.pointerId);
+            }
             if (!myRoles.includes(role))
                 return;
             handleRelease(role);
         });
-        button.addEventListener("pointercancel", () => {
+        button.addEventListener("pointercancel", (event) => {
+            if (button.hasPointerCapture(event.pointerId)) {
+                button.releasePointerCapture(event.pointerId);
+            }
             if (!myRoles.includes(role))
                 return;
             handleRelease(role);
@@ -1479,6 +1610,7 @@ function bindRoom(room) {
         latestState = state;
         if (state.roomState === "lobby") {
             finalCompletionMs = null;
+            hideCongratsScreen();
         }
         const mainScene = game?.scene.getScene("main");
         if ((previousState && previousState.level.id !== state.level.id) || (mainScene && !mainScene.isRenderingLevel(state.level.id))) {
@@ -1504,6 +1636,8 @@ function bindRoom(room) {
                     position: { ...previousState.teamPosition },
                     keepPlayerHidden: false
                 };
+                // Hazard respawns happen during the "playing" state, so clear any previous round result UI.
+                latestResult = null;
             }
         }
         targetTeamPosition = { ...state.teamPosition };
@@ -1536,9 +1670,14 @@ function bindRoom(room) {
         }
         if (result.outcome === "win" && result.completionMs !== undefined) {
             finalCompletionMs = result.completionMs;
-            showWinReveal(result);
+            const currentLevelNum = latestState ? levelNumberFromId(latestState.level.id) : null;
+            if (currentLevelNum === 10) {
+                showCongratsScreen(result);
+            }
+            else {
+                showWinReveal(result);
+            }
             if (latestState) {
-                const currentLevelNum = parseInt(latestState.level.id.replace(/\D/g, ""), 10);
                 if (currentLevelNum === 3 || currentLevelNum === 6 || currentLevelNum === 9 || currentLevelNum === 10) {
                     void stopSoundtrack();
                 }
@@ -1560,6 +1699,7 @@ function bindRoom(room) {
         latestState = null;
         currentLevel = null;
         latestResult = null;
+        currentDebugInvincible = false;
         myRoles = [];
         myPlayerId = "";
         roomCode = "";
@@ -1568,6 +1708,7 @@ function bindRoom(room) {
         hostStartPending = false;
         obstacleTargets.clear();
         pendingDieAnimation = null;
+        hideCongratsScreen();
         clearPersistedRoom();
         void stopSoundtrack();
         updateUi();
@@ -1589,12 +1730,14 @@ async function quitToMenu() {
     latestState = null;
     currentLevel = null;
     latestResult = null;
+    currentDebugInvincible = false;
     myRoles = [];
     myPlayerId = "";
     roomCode = "";
     myRoomId = "";
     obstacleTargets.clear();
     pendingDieAnimation = null;
+    hideCongratsScreen();
     void stopSoundtrack();
     updateUi();
     showMenu();
@@ -1616,6 +1759,12 @@ async function enterRoom(options) {
         resetConnectionStats();
         const playerName = selectedPlayerName();
         currentDebugSolo = isDebugCreatePath && Boolean(debugSoloEl.checked) && !options.roomId && !options.roomCode;
+        currentDebugInvincible =
+            isDebugCreatePath &&
+                Boolean(debugSoloEl.checked) &&
+                Boolean(debugInvincibleEl.checked) &&
+                !options.roomId &&
+                !options.roomCode;
         if (options.roomId) {
             currentRoom = await colyseus.joinById(options.roomId, { reconnectPlayerId, playerName });
             currentVisibility = "public";
@@ -1637,6 +1786,8 @@ async function enterRoom(options) {
                 debugSolo: currentDebugSolo,
                 debugMoveSpeed: isDebugCreatePath ? selectedDebugMoveSpeed() : undefined,
                 debugLevelId: isDebugCreatePath ? selectedDebugLevelId() : undefined,
+                debugInvincible: currentDebugInvincible,
+                debugSpawnNearGoal: isDebugCreatePath && Boolean(debugSoloEl.checked) && Boolean(debugSpawnNearGoalEl.checked),
                 playerName,
                 visibility: currentVisibility
             });
@@ -1701,6 +1852,7 @@ async function joinPrivateRoomFromModal() {
 function startGame() {
     hostStartPending = true;
     closeAllModals();
+    hideCongratsScreen();
     send("start_game");
 }
 async function resumePersistedRoom() {
@@ -1727,6 +1879,61 @@ document.getElementById("refreshRooms").onclick = () => void fetchRoomList();
 document.getElementById("joinByCode").onclick = () => void joinPrivateRoomFromModal();
 lobbyStartGameEl.onclick = startGame;
 quitGameEl.onclick = () => void quitToMenu();
+congratsCloseEl.onclick = () => void quitToMenu();
+shareResultXEl.onclick = () => {
+    const result = latestCongratsResult;
+    const teamDisplay = latestCongratsTeam || (result ? resultTeamDisplay(result) : "");
+    if (!capturedCongratsImage || !result) {
+        const shareUrl = result
+            ? shareUrlForResult(result, teamDisplay)
+            : shareResultXEl.dataset.shareUrl;
+        if (!shareUrl)
+            return;
+        const opened = window.open(shareUrl, "_blank", "noopener,noreferrer");
+        if (!opened)
+            window.location.href = shareUrl;
+        return;
+    }
+    const originalText = shareResultXEl.textContent;
+    shareResultXEl.textContent = "Uploading...";
+    shareResultXEl.disabled = true;
+    fetch(`${httpServerUrl}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            image: capturedCongratsImage,
+            teamName: teamDisplay,
+            completionMs: result.completionMs ?? 0,
+            leaderboardRank: result.leaderboardRank ?? null
+        })
+    })
+        .then((res) => {
+        if (!res.ok)
+            throw new Error("Upload failed");
+        return res.json();
+    })
+        .then(({ url }) => {
+        const sharePageUrl = `${httpServerUrl}${url}`;
+        const timeText = formatTime(result.completionMs ?? 0);
+        const rankText = result.leaderboardRank ? `#${result.leaderboardRank}` : "Unranked";
+        const text = `${teamDisplay} completed Chaosey in ${timeText} with leaderboard rank ${rankText}. Can you beat us?`;
+        const params = new URLSearchParams({ text, url: sharePageUrl });
+        const tweetUrl = `https://twitter.com/intent/tweet?${params.toString()}`;
+        const opened = window.open(tweetUrl, "_blank", "noopener,noreferrer");
+        if (!opened)
+            window.location.href = tweetUrl;
+    })
+        .catch(() => {
+        const shareUrl = shareUrlForResult(result, teamDisplay);
+        const opened = window.open(shareUrl, "_blank", "noopener,noreferrer");
+        if (!opened)
+            window.location.href = shareUrl;
+    })
+        .finally(() => {
+        shareResultXEl.textContent = originalText;
+        shareResultXEl.disabled = false;
+    });
+};
 visibilityPublicEl.onclick = () => setSelectedVisibility("public");
 visibilityPrivateEl.onclick = () => setSelectedVisibility("private");
 debugSoloEl.onchange = updateDebugSpeedControl;

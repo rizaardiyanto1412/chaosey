@@ -1,0 +1,22 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - main [ref=e4]
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: Fast chaotic co-op
+          - heading "Chaosey" [level=1] [ref=e9]
+          - paragraph [ref=e10]: Chaosey is a chaotic online co-op adventure for 2-4 players where every player assigned their own key to play the game.
+        - generic [ref=e11]:
+          - heading "Enter The Forest" [level=2] [ref=e12]
+          - generic [ref=e13]:
+            - generic [ref=e14]: Name
+            - textbox "Name" [ref=e15]:
+              - /placeholder: Your name
+          - generic [ref=e16]:
+            - button "Create Room" [ref=e17] [cursor=pointer]
+            - button "Join Room" [ref=e18] [cursor=pointer]
+      - button "Mute music" [ref=e20] [cursor=pointer]:
+        - img [ref=e21]
+  - link "🕹️ Vibe Jam 2026" [ref=e26] [cursor=pointer]:
+    - /url: https://vibej.am/

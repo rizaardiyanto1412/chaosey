@@ -748,43 +748,49 @@
       .congrats-card {
         position: relative;
         z-index: 2;
-        width: min(720px, calc(100vw - 48px));
+        width: min(760px, calc(100vw - 48px));
         display: grid;
-        gap: 20px;
+        gap: 18px;
         justify-items: center;
         text-align: center;
-        padding: clamp(28px, 5vw, 54px);
-        border-radius: 34px;
+        padding: clamp(30px, 4vw, 46px) clamp(28px, 4.8vw, 54px);
+        border-radius: 28px;
         border: 2px solid rgba(247, 211, 125, 0.68);
         background:
-          radial-gradient(circle at 50% 0%, rgba(255, 239, 176, 0.18), transparent 34%),
+          linear-gradient(180deg, rgba(255, 246, 221, 0.05), rgba(255, 246, 221, 0)),
+          radial-gradient(circle at 50% 0%, rgba(255, 239, 176, 0.2), transparent 36%),
           linear-gradient(180deg, rgba(14, 42, 44, 0.94), rgba(73, 38, 13, 0.9));
         box-shadow: 0 32px 110px rgba(0, 0, 0, 0.56), inset 0 0 80px rgba(247, 211, 125, 0.12);
         animation: congrats-card-pop 760ms cubic-bezier(0.16, 1, 0.3, 1) both;
       }
 
       .congrats-eyebrow {
-        font-size: clamp(0.86rem, 1.8vw, 1.05rem);
-        letter-spacing: 0.34em;
+        margin-bottom: -2px;
+        font-size: clamp(0.78rem, 1.2vw, 0.94rem);
+        font-weight: 900;
+        letter-spacing: 0.32em;
         text-transform: uppercase;
         color: #cff7d0;
       }
 
       .congrats-title {
         margin: 0;
-        font-size: clamp(3rem, 10vw, 7.2rem);
-        line-height: 0.9;
+        max-width: 680px;
+        font-size: clamp(3.2rem, 7.4vw, 6.4rem);
+        line-height: 0.92;
         color: #fff6dd;
         text-shadow: 0 0 24px rgba(255, 205, 86, 0.45), 0 10px 34px rgba(0, 0, 0, 0.7);
-        letter-spacing: -0.06em;
+        letter-spacing: -0.035em;
       }
 
       .congrats-copy {
-        margin: 0;
+        margin: -2px 0 4px;
         max-width: 520px;
         color: #f3ead0;
-        font-size: clamp(1rem, 2.2vw, 1.22rem);
-        line-height: 1.5;
+        font-size: clamp(0.98rem, 1.5vw, 1.12rem);
+        font-weight: 800;
+        line-height: 1.45;
+        opacity: 0.9;
       }
 
       .congrats-team {
@@ -796,28 +802,33 @@
         width: 100%;
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
+        gap: 14px;
       }
 
       .congrats-stat {
         display: grid;
-        gap: 6px;
-        padding: 16px;
-        border-radius: 20px;
+        align-content: center;
+        gap: 8px;
+        min-height: 92px;
+        padding: 16px 18px 18px;
+        border-radius: 18px;
         background: rgba(255, 246, 221, 0.08);
         border: 1px solid rgba(247, 211, 125, 0.28);
+        box-shadow: inset 0 1px 0 rgba(255, 246, 221, 0.08);
       }
 
       .congrats-stat-label {
-        font-size: 0.78rem;
-        letter-spacing: 0.18em;
+        font-size: 0.72rem;
+        font-weight: 950;
+        letter-spacing: 0.2em;
         text-transform: uppercase;
         color: #e9d8a6;
       }
 
       .congrats-stat-value {
         color: #fff6dd;
-        font-size: clamp(1.5rem, 4vw, 2.3rem);
+        font-size: clamp(1.75rem, 3.5vw, 2.4rem);
+        line-height: 1;
         font-weight: 950;
         font-variant-numeric: tabular-nums;
       }
@@ -827,6 +838,21 @@
         flex-wrap: wrap;
         justify-content: center;
         gap: 12px;
+        margin-top: 2px;
+      }
+
+      .congrats-actions .menu-button {
+        min-height: 54px;
+        min-width: 154px;
+        padding: 14px 22px;
+        border-radius: 18px;
+        font-size: 1rem;
+        text-align: center;
+      }
+
+      .congrats-actions .menu-button::before {
+        inset: 4px;
+        border-radius: 14px;
       }
 
       .confetti {
@@ -913,6 +939,7 @@
         letter-spacing: 0.02em;
         padding-right: 14px;
         border-right: 1px solid rgba(247, 211, 125, 0.22);
+        white-space: nowrap;
       }
 
       .hud-score .acorn-icon {
@@ -932,6 +959,7 @@
         min-width: 112px;
         text-align: center;
         font-variant-numeric: tabular-nums;
+        white-space: nowrap;
       }
 
       /* Player roster on the right */
@@ -1196,6 +1224,73 @@
         display: none;
       }
 
+      .touch-controls {
+        position: absolute;
+        left: 50%;
+        bottom: max(58px, env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        z-index: 8;
+        grid-template-columns: repeat(3, 58px);
+        grid-template-rows: repeat(2, 58px);
+        gap: 8px;
+        pointer-events: auto;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      .touch-button {
+        width: 58px;
+        height: 58px;
+        border: 2px solid rgba(255, 228, 150, 0.48);
+        border-radius: 18px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        color: #fff6dd;
+        background:
+          radial-gradient(circle at 30% 24%, rgba(255, 241, 197, 0.28), transparent 42%),
+          linear-gradient(180deg, #9a6530 0%, #78441f 56%, #5b2f13 100%);
+        box-shadow:
+          inset 0 2px 0 rgba(255, 241, 197, 0.24),
+          inset 0 -3px 0 rgba(40, 20, 6, 0.62),
+          0 10px 22px rgba(0, 0, 0, 0.38);
+        font-size: 1.45rem;
+        font-weight: 950;
+        line-height: 1;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.42);
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .touch-button:active {
+        transform: translateY(2px) scale(0.96);
+        filter: brightness(1.08);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 241, 197, 0.18),
+          inset 0 -1px 0 rgba(40, 20, 6, 0.7),
+          0 5px 14px rgba(0, 0, 0, 0.42);
+      }
+
+      .touch-button-w {
+        grid-column: 2;
+        grid-row: 1;
+      }
+
+      .touch-button-a {
+        grid-column: 1;
+        grid-row: 2;
+      }
+
+      .touch-button-s {
+        grid-column: 2;
+        grid-row: 2;
+      }
+
+      .touch-button-d {
+        grid-column: 3;
+        grid-row: 2;
+      }
+
       .modal-backdrop {
         z-index: 12;
         background: rgba(3, 11, 14, 0.72);
@@ -1349,21 +1444,46 @@
 
       @media (max-width: 640px) {
         .hud-top-center {
-          padding: 8px 16px 8px 10px;
+          top: 20px;
+          gap: 10px;
+          padding: 8px 14px 8px 10px;
+          border-radius: 28px;
         }
 
         .hud-timer {
-          font-size: 1.3rem;
-          min-width: 86px;
+          font-size: 1.28rem;
+          min-width: 92px;
+          letter-spacing: 0.02em;
         }
 
         .hud-score {
-          font-size: 1.1rem;
+          gap: 7px;
+          padding-right: 10px;
+          font-size: 1rem;
+          line-height: 1;
         }
 
         .hud-score .acorn-icon {
-          width: 24px;
-          height: 24px;
+          width: 22px;
+          height: 22px;
+        }
+
+        .hud-connection {
+          top: 74px;
+          right: auto;
+          left: 50%;
+          transform: translateX(-50%);
+        }
+
+        .connection-indicator {
+          min-height: 20px;
+          padding: 3px 9px;
+          font-size: 0.78rem;
+        }
+
+        .connection-indicator::before {
+          width: 7px;
+          height: 7px;
         }
 
         .sound-toggle {
@@ -1386,10 +1506,50 @@
 
         .congrats-card {
           width: 100%;
+          gap: 14px;
+          padding: 28px 18px;
+          border-radius: 24px;
+        }
+
+        .congrats-eyebrow {
+          font-size: 0.72rem;
+          letter-spacing: 0.22em;
+        }
+
+        .congrats-title {
+          max-width: 420px;
+          font-size: clamp(2.35rem, 10.4vw, 3.1rem);
+          letter-spacing: -0.04em;
         }
 
         .congrats-stats {
           grid-template-columns: 1fr;
+          gap: 10px;
+        }
+
+        .congrats-stat {
+          min-height: 78px;
+          padding: 14px;
+        }
+
+        .congrats-actions {
+          width: 100%;
+          gap: 10px;
+        }
+
+        .congrats-actions .menu-button {
+          flex: 1 1 180px;
+          min-width: 0;
+        }
+      }
+
+      @media (hover: none) and (pointer: coarse) {
+        .touch-controls {
+          display: grid;
+        }
+
+        .hud-bottom-left {
+          display: none;
         }
       }
     </style>
@@ -1506,6 +1666,13 @@
           </button>
           <button id="quitGame" class="hud-button" type="button">Quit</button>
         </div>
+
+        <div class="touch touch-controls" aria-label="Movement controls">
+          <button class="touch-button touch-button-w" type="button" data-role="W" aria-label="Move up">W</button>
+          <button class="touch-button touch-button-a" type="button" data-role="A" aria-label="Move left">A</button>
+          <button class="touch-button touch-button-s" type="button" data-role="S" aria-label="Move down">S</button>
+          <button class="touch-button touch-button-d" type="button" data-role="D" aria-label="Move right">D</button>
+        </div>
       </section>
 
       <section class="role-reveal-overlay" id="roleRevealOverlay" hidden>
@@ -1621,6 +1788,14 @@
               <label class="checkbox-row">
                 <input id="debugSolo" type="checkbox" />
                 Debug mode for solo start
+              </label>
+              <label class="checkbox-row">
+                <input id="debugInvincible" type="checkbox" disabled />
+                Invincible player (debug)
+              </label>
+              <label class="checkbox-row">
+                <input id="debugSpawnNearGoal" type="checkbox" disabled />
+                Spawn near goal (debug)
               </label>
               <div class="field">
                 <label for="debugMoveSpeed">Debug movement speed</label>
