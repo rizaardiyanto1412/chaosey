@@ -762,6 +762,63 @@ function updateLevelTransitionOverlay() {
   levelTransitionOverlayEl.style.setProperty("--transition-progress", String(1 - remainingMs / Math.max(1, transition.endsAt - transition.startsAt)));
 }
 
+function renderPowerChoiceCards() {
+  if (!powerChoiceCardsEl || powerChoiceCardsEl.childElementCount > 0) return;
+  for (const option of powerUpOptions) {
+    const button = document.createElement("button");
+    button.className = "power-choice-card";
+    button.type = "button";
+    button.dataset.powerUpId = option.id;
+    button.innerHTML = `
+      <span class="power-choice-card-eyebrow">${escapeHtml(option.eyebrow)}</span>
+      <strong>${escapeHtml(option.title)}</strong>
+      <span>${escapeHtml(option.description)}</span>
+      <em>${escapeHtml(option.stat)}</em>
+    `;
+    button.addEventListener("click", () => {
+      for (const card of powerChoiceCardsEl.querySelectorAll<HTMLButtonElement>(".power-choice-card")) {
+        card.disabled = true;
+        card.classList.toggle("is-selected", card === button);
+      }
+      send("select_powerup", { powerUpId: option.id });
+    });
+    powerChoiceCardsEl.appendChild(button);
+  }
+}
+
+function updatePowerChoiceOverlay() {
+  if (!powerChoiceOverlayEl || !powerChoiceCardsEl) return;
+  renderPowerChoiceCards();
+  const shouldShow = latestState?.roomState === "power_choice";
+  setVisibility(powerChoiceOverlayEl, shouldShow);
+  if (!shouldShow) {
+    for (const card of powerChoiceCardsEl.querySelectorAll<HTMLButtonElement>(".power-choice-card")) {
+      card.disabled = false;
+      card.classList.remove("is-selected");
+    }
+    return;
+  }
+  setVisibility(levelTransitionOverlayEl, false);
+}
+
+function updateActivePowerUpDisplay() {
+  if (!activePowerUpEl) return;
+  const powerUp = latestState?.activePowerUp;
+  if (!powerUp || powerUp.endsAt <= Date.now()) {
+    activePowerUpEl.hidden = true;
+    activePowerUpEl.textContent = "";
+    return;
+  }
+
+  const remainingSeconds = Math.ceil((powerUp.endsAt - Date.now()) / 1000);
+  const shieldText =
+    powerUp.id === "shield" && typeof powerUp.shieldHitsRemaining === "number"
+      ? ` • ${powerUp.shieldHitsRemaining} hit${powerUp.shieldHitsRemaining === 1 ? "" : "s"}`
+      : "";
+  activePowerUpEl.hidden = false;
+  activePowerUpEl.textContent = `${powerUp.label} ${remainingSeconds}s${shieldText}`;
+}
+
 function resetLevelTransitionOverlayAnimation() {
   if (!levelTransitionOverlayEl) return;
   levelTransitionOverlayEl.style.animation = "none";
@@ -1547,6 +1604,8 @@ function updateUi() {
   updateLobbyOverlay();
   syncLobbyControls();
   updateLevelTransitionOverlay();
+  updatePowerChoiceOverlay();
+  updateActivePowerUpDisplay();
   updateScoreDisplay();
   renderRoster();
 }
@@ -1786,6 +1845,7 @@ function bindRoom(room: Room) {
       timerElapsedMs: snapshot.timerElapsedMs,
       timerRunning: snapshot.timerRunning,
       levelTransition: snapshot.levelTransition,
+      activePowerUp: snapshot.activePowerUp,
       serverTime: snapshot.serverTime
     };
 
@@ -2144,6 +2204,7 @@ setInterval(() => {
   lastPingSentAt = sentAt;
   send("ping", { sentAt });
   updateConnectionIndicator();
+  updateActivePowerUpDisplay();
 }, 1500);
 
 window.addEventListener("keydown", (event) => {
