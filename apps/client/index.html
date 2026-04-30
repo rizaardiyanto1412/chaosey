@@ -293,6 +293,36 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
+      .region-control {
+        display: grid;
+        gap: 8px;
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px solid rgba(255, 228, 150, 0.18);
+        background: rgba(248, 242, 221, 0.06);
+      }
+
+      .region-control label {
+        color: #fff5d8;
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      .region-control select {
+        width: 100%;
+        border: 1px solid rgba(255, 228, 150, 0.24);
+        border-radius: 12px;
+        background: rgba(9, 18, 24, 0.84);
+        color: #fff5d8;
+        font: inherit;
+        padding: 11px 12px;
+      }
+
+      .region-status {
+        color: #f1e6c8;
+        font-size: 0.88rem;
+      }
+
       .choice-card,
       .server-card {
         border-radius: 20px;
@@ -1876,6 +1906,11 @@
             <div class="field">
               <label for="playerName">Name</label>
               <input id="playerName" placeholder="Your name" maxlength="24" autocomplete="nickname" />
+            </div>
+            <div class="region-control">
+              <label for="serverRegionSelect">Server region</label>
+              <select id="serverRegionSelect"></select>
+              <div class="region-status" id="serverRegionStatus">Server: checking nearest region...</div>
             </div>
             <div class="menu-actions">
               <button id="create" class="menu-button" type="button">Create Room</button>

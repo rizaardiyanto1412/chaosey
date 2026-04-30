@@ -3,9 +3,23 @@ import { Client } from "colyseus.js";
 import html2canvas from "html2canvas";
 import { mapKeyToRole } from "./lib/input";
 import { DEFAULT_LEVEL_ID } from "@wasd/shared";
-const serverUrl = import.meta.env.VITE_SERVER_URL ?? "ws://localhost:3001";
-const colyseus = new Client(serverUrl.replace(/^http/, "ws"));
-const httpServerUrl = serverUrl.replace(/^ws/, "http");
+const isLocalClientHost = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
+const configuredServerUrl = import.meta.env.VITE_SERVER_URL ?? (isLocalClientHost ? "ws://localhost:3001" : undefined);
+const defaultServerRegions = configuredServerUrl
+    ? [{ id: "custom", label: "Custom", location: "Configured server", url: configuredServerUrl }]
+    : [
+        { id: "sg", label: "Singapore", location: "SEA", url: "https://chaosey.riza.website" },
+        { id: "fi", label: "Finland", location: "Europe", url: "https://chaosey.rizamaulana.com" },
+        { id: "us", label: "United States", location: "US", url: "https://chaosey-us.rizamaulana.com" }
+    ];
+const serverRegions = defaultServerRegions.map((region) => ({
+    ...region,
+    httpUrl: region.url.replace(/^ws/, "http").replace(/\/$/, ""),
+    wsUrl: region.url.replace(/^http/, "ws").replace(/\/$/, "")
+}));
+let selectedRegion = serverRegions[0];
+let colyseus = new Client(selectedRegion.wsUrl);
+let httpServerUrl = selectedRegion.httpUrl;
 const roomEl = document.getElementById("room");
 const roleEl = document.getElementById("role");
 const stateEl = document.getElementById("state");
@@ -37,6 +51,8 @@ const createRoomStatusEl = document.getElementById("createRoomStatus");
 const joinRoomStatusEl = document.getElementById("joinRoomStatus");
 const loadingLabelEl = document.getElementById("loadingLabel");
 const roomListEl = document.getElementById("roomList");
+const serverRegionSelectEl = document.getElementById("serverRegionSelect");
+const serverRegionStatusEl = document.getElementById("serverRegionStatus");
 const createdRoomCodeEl = document.getElementById("createdRoomCode");
 const createdRoomMetaEl = document.getElementById("createdRoomMeta");
 const createdRoomPlayersEl = document.getElementById("createdRoomPlayers");
@@ -72,6 +88,7 @@ const shareResultXEl = document.getElementById("shareResultX");
 const congratsCloseEl = document.getElementById("congratsClose");
 const touchButtons = document.querySelectorAll("[data-role]");
 const persistedRoomKey = "key-chaos.active-room";
+const selectedRegionKey = "key-chaos.server-region";
 const defaultMoveSpeed = 160;
 const selectedLevelId = import.meta.env.VITE_LEVEL_ID ?? DEFAULT_LEVEL_ID;
 const isDebugCreatePath = window.location.pathname === "/debugxthing";
@@ -164,6 +181,88 @@ let isMuted = (() => {
 })();
 const soundtrackBaseVolume = 0.4;
 const lobbyBaseVolume = 0.3;
+function regionById(regionId) {
+    return serverRegions.find((region) => region.id === regionId) ?? null;
+}
+function setActiveRegion(region, options = {}) {
+    selectedRegion = region;
+    colyseus = new Client(region.wsUrl);
+    httpServerUrl = region.httpUrl;
+    serverRegionSelectEl.value = region.id;
+    if (options.persist) {
+        window.localStorage.setItem(selectedRegionKey, region.id);
+    }
+}
+function updateServerRegionStatus(label) {
+    serverRegionStatusEl.textContent = label;
+}
+async function pingRegion(region) {
+    const startedAt = performance.now();
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2500);
+    try {
+        await fetch(`${region.httpUrl}/health?ts=${Date.now()}`, {
+            cache: "no-store",
+            mode: "cors",
+            signal: controller.signal
+        });
+        return performance.now() - startedAt;
+    }
+    finally {
+        window.clearTimeout(timeout);
+    }
+}
+async function selectFastestRegion() {
+    if (configuredServerUrl || serverRegions.length <= 1) {
+        setActiveRegion(selectedRegion);
+        updateServerRegionStatus(`Server: ${selectedRegion.label}`);
+        return;
+    }
+    const savedRegion = regionById(window.localStorage.getItem(selectedRegionKey));
+    if (savedRegion) {
+        setActiveRegion(savedRegion);
+        updateServerRegionStatus(`Server: ${savedRegion.label}`);
+        return;
+    }
+    updateServerRegionStatus("Server: checking nearest region...");
+    const results = await Promise.allSettled(serverRegions.map(async (region) => ({
+        region,
+        rtt: await pingRegion(region)
+    })));
+    const reachableRegions = results
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => result.value)
+        .sort((a, b) => a.rtt - b.rtt);
+    const fastest = reachableRegions[0];
+    if (!fastest) {
+        updateServerRegionStatus(`Server: ${selectedRegion.label} (auto check failed)`);
+        return;
+    }
+    if (currentRoom || isTransitioningRoom)
+        return;
+    setActiveRegion(fastest.region);
+    updateServerRegionStatus(`Server: ${fastest.region.label} (${Math.round(fastest.rtt)} ms)`);
+}
+function initServerRegionSelector() {
+    serverRegionSelectEl.innerHTML = serverRegions
+        .map((region) => `<option value="${region.id}">${region.label} (${region.location})</option>`)
+        .join("");
+    serverRegionSelectEl.disabled = Boolean(configuredServerUrl) || serverRegions.length <= 1;
+    serverRegionSelectEl.addEventListener("change", () => {
+        const nextRegion = regionById(serverRegionSelectEl.value);
+        if (!nextRegion)
+            return;
+        setActiveRegion(nextRegion, { persist: true });
+        availableRooms = [];
+        renderRoomList();
+        updateServerRegionStatus(`Server: ${nextRegion.label}`);
+        if (!joinRoomModalEl.hidden) {
+            void fetchRoomList();
+        }
+    });
+    setActiveRegion(selectedRegion);
+    void selectFastestRegion();
+}
 function setVisibility(element, isVisible) {
     element.hidden = !isVisible;
 }
@@ -230,7 +329,8 @@ function readPersistedRoom() {
         return {
             roomId: parsed.roomId,
             roomCode: parsed.roomCode,
-            playerId: parsed.playerId
+            playerId: parsed.playerId,
+            regionId: parsed.regionId
         };
     }
     catch {
@@ -243,7 +343,8 @@ function writePersistedRoom() {
     const payload = {
         roomId: myRoomId,
         roomCode,
-        playerId: myPlayerId
+        playerId: myPlayerId,
+        regionId: selectedRegion.id
     };
     window.localStorage.setItem(persistedRoomKey, JSON.stringify(payload));
 }
@@ -1542,7 +1643,7 @@ function hydrateMyRolesFromPlayers(players) {
 }
 function renderRoomList() {
     if (availableRooms.length === 0) {
-        roomListEl.innerHTML = '<div class="server-empty">No public rooms are open right now.</div>';
+        roomListEl.innerHTML = `<div class="server-empty">No public rooms are open on ${selectedRegion.label} right now.</div>`;
         return;
     }
     roomListEl.innerHTML = availableRooms
@@ -1550,7 +1651,7 @@ function renderRoomList() {
         <div class="server-card">
           <div class="server-card-copy">
             <strong>Room ${room.roomCode}</strong>
-            <span>${room.playerCount}/${room.maxClients} players • ${room.roomState}</span>
+            <span>${selectedRegion.label} • ${room.playerCount}/${room.maxClients} players • ${room.roomState}</span>
           </div>
           <button class="menu-button secondary" type="button" data-room-id="${room.roomId}">Join</button>
         </div>
@@ -1561,7 +1662,7 @@ function renderRoomList() {
     }
 }
 async function fetchRoomList() {
-    joinRoomStatusEl.textContent = "Loading rooms...";
+    joinRoomStatusEl.textContent = `Loading ${selectedRegion.label} rooms...`;
     try {
         const response = await fetch(`${httpServerUrl}/rooms`);
         if (!response.ok) {
@@ -1867,7 +1968,7 @@ async function quitToMenu() {
 async function enterRoom(options) {
     try {
         isTransitioningRoom = true;
-        showLoading(options.roomId || options.roomCode ? "Joining room..." : "Creating your room...");
+        showLoading(options.roomId || options.roomCode ? `Joining ${selectedRegion.label} room...` : `Creating your ${selectedRegion.label} room...`);
         await leaveCurrentRoom();
         await stopLobbySound();
         const reconnectPlayerId = options.reconnectPlayerId;
@@ -1959,7 +2060,8 @@ async function createRoomFromModal() {
         startGame();
         return;
     }
-    createRoomStatusEl.textContent = currentVisibility === "public" ? "Creating public room..." : "Creating private room...";
+    createRoomStatusEl.textContent =
+        currentVisibility === "public" ? `Creating public room on ${selectedRegion.label}...` : `Creating private room on ${selectedRegion.label}...`;
     await enterRoom({ visibility: currentVisibility });
 }
 async function joinPrivateRoomFromModal() {
@@ -1985,6 +2087,11 @@ async function resumePersistedRoom() {
     myRoomId = persistedRoom.roomId;
     myPlayerId = persistedRoom.playerId;
     roomCode = persistedRoom.roomCode;
+    const persistedRegion = regionById(persistedRoom.regionId);
+    if (persistedRegion) {
+        setActiveRegion(persistedRegion);
+        updateServerRegionStatus(`Server: ${persistedRegion.label}`);
+    }
     await enterRoom({ roomId: persistedRoom.roomId, reconnectPlayerId: persistedRoom.playerId });
 }
 document.getElementById("create").onclick = openCreateRoomModal;
@@ -2091,6 +2198,7 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => handleRelease(event.key));
 window.addEventListener("resize", resizeGame);
 attachTouch();
+initServerRegionSelector();
 setSelectedVisibility("public");
 updateDebugSpeedControl();
 renderRoomList();

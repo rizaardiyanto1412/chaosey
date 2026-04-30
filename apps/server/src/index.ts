@@ -91,6 +91,11 @@ interface TileComponent {
 
 const port = Number(process.env.PORT ?? 3001);
 const clientOrigin = process.env.CLIENT_ORIGIN ?? "http://localhost:5173";
+const allowedClientOrigins = clientOrigin
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const primaryClientOrigin = allowedClientOrigins[0] ?? "http://localhost:5173";
 const tickRate = Number(process.env.TICK_RATE ?? 20);
 const snapshotRate = Number(process.env.SNAPSHOT_RATE ?? 10);
 const disconnectGraceMs = Number(process.env.DISCONNECT_GRACE_MS ?? 10000);
@@ -1322,7 +1327,7 @@ class WasdRoom extends Room {
 
 const transport = new uWebSocketsTransport({});
 const app = expressify(transport.app);
-app.use(cors({ origin: clientOrigin }));
+app.use(cors({ origin: allowedClientOrigins.length > 1 ? allowedClientOrigins : allowedClientOrigins[0] }));
 
 async function currentRoomSummaries(options: { joinableOnly?: boolean } = {}): Promise<LobbyRoomSummary[]> {
   const rooms = await matchMaker.query({ name: "wasd_room" });
@@ -1595,7 +1600,7 @@ app.get("/share/:id", (req, res) => {
     <h1 style="font-size:2rem;margin-bottom:8px;">${teamName} completed Chaosey!</h1>
     <p style="font-size:1.2rem;color:#94a3b8;">Time: ${esc(timeText)} &middot; Rank: ${esc(rankText)}</p>
     <img src="/share/${esc(id)}/image" alt="Completion screenshot" style="width:100%;border-radius:12px;margin:24px 0;" />
-    <p><a href="${esc(clientOrigin)}" style="color:#818cf8;">Play Chaosey</a></p>
+    <p><a href="${esc(primaryClientOrigin)}" style="color:#818cf8;">Play Chaosey</a></p>
   </div>
 </body>
 </html>`);
