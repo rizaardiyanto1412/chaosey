@@ -206,6 +206,14 @@ export function composeDirection(input: InputState): Vector2 {
   return { x: x / magnitude, y: y / magnitude };
 }
 
+export function directionForRole(role: PlayerRole | null | undefined): Vector2 {
+  if (role === "W") return { x: 0, y: -1 };
+  if (role === "A") return { x: -1, y: 0 };
+  if (role === "S") return { x: 0, y: 1 };
+  if (role === "D") return { x: 1, y: 0 };
+  return { x: 0, y: 0 };
+}
+
 export function circlesIntersectsRect(center: Vector2, radius: number, rectPos: Vector2, rectSize: Vector2): boolean {
   const nearestX = Math.max(rectPos.x, Math.min(center.x, rectPos.x + rectSize.x));
   const nearestY = Math.max(rectPos.y, Math.min(center.y, rectPos.y + rectSize.y));

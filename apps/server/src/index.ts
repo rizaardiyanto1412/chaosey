@@ -14,13 +14,11 @@ import {
   type ActivePowerUp,
   circlesIntersectsRect,
   type Collectible,
-  composeDirection,
-  emptyInputState,
+  directionForRole,
   type LobbyRoomSummary,
   type Obstacle,
   roleBundlesForPlayerCount,
   type FailReason,
-  type InputState,
   type JoinedRoomPayload,
   type LevelLoadedPayload,
   type LevelTransitionPayload,
@@ -526,7 +524,7 @@ class WasdRoom extends Room {
   private tick = 0;
   private players = new Map<string, RoomPlayer>();
   private sessionToPlayerId = new Map<string, string>();
-  private inputState: InputState = emptyInputState();
+  private activeMoveRole: PlayerRole | null = null;
   private teamPosition = { ...DEFAULT_LEVEL.spawn };
   private level = structuredClone(DEFAULT_LEVEL);
   private currentLevelIndex = initialLevelIndex;
@@ -617,15 +615,14 @@ class WasdRoom extends Room {
       const player = this.playerFromClient(client.sessionId);
       if (!player || this.roomState !== "playing" || !player.connected) return;
       if (!player.roles.includes(payload.role)) return;
-      this.inputState[payload.role] = true;
+      this.activeMoveRole = payload.role;
       player.lastInputAt = now();
     });
 
     this.onMessage("input_release", (client, payload: { role: PlayerRole }) => {
       const player = this.playerFromClient(client.sessionId);
-      if (!player || this.roomState !== "playing") return;
+      if (!player || this.roomState !== "playing" || !player.connected) return;
       if (!player.roles.includes(payload.role)) return;
-      this.inputState[payload.role] = false;
       player.lastInputAt = now();
     });
 
@@ -737,8 +734,8 @@ class WasdRoom extends Room {
 
     player.connected = false;
     player.disconnectedAt = now();
-    for (const role of player.roles) {
-      this.inputState[role] = false;
+    if (this.activeMoveRole && player.roles.includes(this.activeMoveRole)) {
+      this.activeMoveRole = null;
     }
 
     this.emitPlayerStatus();
@@ -830,7 +827,7 @@ class WasdRoom extends Room {
     this.powerUpHolderId = this.connectedPowerPlayers()[0]?.playerId ?? null;
     this.roomState = "playing";
     this.levelTransition = null;
-    this.inputState = emptyInputState();
+    this.activeMoveRole = null;
     this.emitRoomState();
     this.emitSnapshot(true);
   }
@@ -894,6 +891,10 @@ class WasdRoom extends Room {
     const player = this.players.get(playerId);
     if (!player) return false;
 
+    if (this.activeMoveRole && player.roles.includes(this.activeMoveRole)) {
+      this.activeMoveRole = null;
+    }
+
     this.players.delete(playerId);
     if (player.sessionId) {
       this.sessionToPlayerId.delete(player.sessionId);
@@ -953,7 +954,7 @@ class WasdRoom extends Room {
     this.selectedPowerUp = null;
     this.powerUpHolderId = null;
     this.activePowerUp = null;
-    this.inputState = emptyInputState();
+    this.activeMoveRole = null;
     this.roundResult = {
       outcome: "fail",
       failReason: reason,
@@ -984,7 +985,7 @@ class WasdRoom extends Room {
     this.selectedPowerUp = null;
     this.powerUpHolderId = null;
     this.activePowerUp = null;
-    this.inputState = emptyInputState();
+    this.activeMoveRole = null;
     this.roundResult = {
       outcome: "win",
       winCondition: "goal_reached",
@@ -1010,7 +1011,7 @@ class WasdRoom extends Room {
     this.level.moveSpeed = moveSpeed;
     this.collisionRects = loaded.collisionRects;
     this.teamPosition = this.debugInitialSpawn();
-    this.inputState = emptyInputState();
+    this.activeMoveRole = null;
     this.collectedCollectibleIds.clear();
     this.score = 0;
     this.broadcastLevelLoaded();
@@ -1029,7 +1030,7 @@ class WasdRoom extends Room {
       const transitionStartsAt = now();
       this.pauseTimer(transitionStartsAt);
       this.roomState = "level_transition";
-      this.inputState = emptyInputState();
+      this.activeMoveRole = null;
       this.levelTransition = {
         fromLevelId: this.level.id,
         toLevelId,
@@ -1049,7 +1050,7 @@ class WasdRoom extends Room {
         }
         this.roomState = shouldChoosePower ? "power_choice" : "playing";
         this.levelTransition = null;
-        this.inputState = emptyInputState();
+        this.activeMoveRole = null;
         this.emitRoomState();
         this.emitSnapshot(true);
       }, levelTransitionDurationMs);
@@ -1068,7 +1069,7 @@ class WasdRoom extends Room {
     this.resetTimer();
     this.loadLevelAtIndex(this.startLevelIndex);
     this.tick = 0;
-    this.inputState = emptyInputState();
+    this.activeMoveRole = null;
     this.teamPosition = this.debugInitialSpawn();
     this.collectedCollectibleIds.clear();
     this.score = 0;
@@ -1099,7 +1100,7 @@ class WasdRoom extends Room {
     this.resetTimer();
     this.loadLevelAtIndex(this.startLevelIndex);
     this.tick = 0;
-    this.inputState = emptyInputState();
+    this.activeMoveRole = null;
     this.teamPosition = this.debugInitialSpawn();
     this.collectedCollectibleIds.clear();
     this.score = 0;
@@ -1114,7 +1115,7 @@ class WasdRoom extends Room {
   }
 
   private applyMovement(dt: number): boolean {
-    const direction = composeDirection(this.inputState);
+    const direction = directionForRole(this.activeMoveRole);
     const startedAt = { ...this.teamPosition };
     let moved = false;
     const clampX = (x: number) => Math.max(this.level.playerRadius, Math.min(this.level.width - this.level.playerRadius, x));
@@ -1212,7 +1213,7 @@ class WasdRoom extends Room {
     } else {
       this.teamPosition = { ...this.level.spawn };
     }
-    this.inputState = emptyInputState();
+    this.activeMoveRole = null;
   }
 
   private resolveHazardCollision(): boolean {
@@ -1272,8 +1273,8 @@ class WasdRoom extends Room {
         player.connected = false;
         player.disconnectedAt = nowAt;
         playerStatusChanged = true;
-        for (const role of player.roles) {
-          this.inputState[role] = false;
+        if (this.activeMoveRole && player.roles.includes(this.activeMoveRole)) {
+          this.activeMoveRole = null;
         }
       }
     }

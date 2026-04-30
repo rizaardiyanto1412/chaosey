@@ -1083,7 +1083,11 @@ class MainScene extends Phaser.Scene {
         this.cameras.main.setBounds(0, 0, this.mapWidth, this.mapHeight);
         this.cameras.main.startFollow(this.playerSprite, true, 0.1, 0.1);
         this.cameras.main.setBackgroundColor("#0f172a");
-        this.input.keyboard?.on("keydown", (event) => handlePress(event.key));
+        this.input.keyboard?.on("keydown", (event) => {
+            if (event.repeat)
+                return;
+            handlePress(event.key);
+        });
         this.input.keyboard?.on("keyup", (event) => handleRelease(event.key));
         void playSoundtrack(this.renderedLevelId);
         signalGameBooted();
@@ -1358,8 +1362,8 @@ function showRoleReveal(roles) {
         }
         roleRevealCaptionEl.textContent =
             roles.length > 1
-                ? "You control these keys. Hold them to move the squirrel."
-                : "Hold this key to move the squirrel.";
+                ? "You control these keys. Press one to steer the squirrel."
+                : "Press this key to steer the squirrel.";
     }
     setVisibility(roleRevealOverlayEl, true);
     // Restart CSS animations by forcing reflow.
@@ -2060,6 +2064,8 @@ setInterval(() => {
     updateActivatePowerUpButton();
 }, 1500);
 window.addEventListener("keydown", (event) => {
+    if (event.repeat)
+        return;
     if (event.key === "Escape" && (!howToModalEl.hidden || !createRoomModalEl.hidden || !joinRoomModalEl.hidden)) {
         closeAllModals();
         return;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { circlesIntersectsRect, composeDirection, roleBundlesForPlayerCount } from "../src";
+import { circlesIntersectsRect, composeDirection, directionForRole, roleBundlesForPlayerCount } from "../src";
 
 describe("composeDirection", () => {
   test("normalizes diagonal input", () => {
@@ -11,6 +11,18 @@ describe("composeDirection", () => {
   test("returns zero vector when idle", () => {
     const output = composeDirection({ W: false, A: false, S: false, D: false });
     expect(output).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe("directionForRole", () => {
+  test("maps a latched role to a cardinal direction", () => {
+    expect(directionForRole("W")).toEqual({ x: 0, y: -1 });
+    expect(directionForRole("D")).toEqual({ x: 1, y: 0 });
+  });
+
+  test("returns zero vector without an active role", () => {
+    expect(directionForRole(null)).toEqual({ x: 0, y: 0 });
+    expect(directionForRole(undefined)).toEqual({ x: 0, y: 0 });
   });
 });
 

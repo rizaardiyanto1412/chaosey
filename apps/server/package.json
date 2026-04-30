@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/src/index.js",
+    "prestart": "test -f dist/apps/server/src/index.js && test -f ../../packages/shared/dist/src/index.js || (npm run build --workspace=@wasd/shared && npm run build)",
+    "start": "node dist/apps/server/src/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

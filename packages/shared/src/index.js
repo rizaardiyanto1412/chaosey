@@ -24,6 +24,17 @@ export function composeDirection(input) {
     const magnitude = Math.hypot(x, y);
     return { x: x / magnitude, y: y / magnitude };
 }
+export function directionForRole(role) {
+    if (role === "W")
+        return { x: 0, y: -1 };
+    if (role === "A")
+        return { x: -1, y: 0 };
+    if (role === "S")
+        return { x: 0, y: 1 };
+    if (role === "D")
+        return { x: 1, y: 0 };
+    return { x: 0, y: 0 };
+}
 export function circlesIntersectsRect(center, radius, rectPos, rectSize) {
     const nearestX = Math.max(rectPos.x, Math.min(center.x, rectPos.x + rectSize.x));
     const nearestY = Math.max(rectPos.y, Math.min(center.y, rectPos.y + rectSize.y));
