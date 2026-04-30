@@ -859,6 +859,12 @@ function renderRoster() {
         .join("");
     rosterEl.innerHTML = rows;
 }
+function updateTouchControls() {
+    for (const button of touchButtons) {
+        const role = button.dataset.role;
+        button.hidden = !role || !myRoles.includes(role);
+    }
+}
 function applyMuteState() {
     if (soundtrackAudio)
         soundtrackAudio.volume = isMuted ? 0 : soundtrackBaseVolume;
@@ -1495,6 +1501,7 @@ function updateUi() {
     updateActivatePowerUpButton();
     updateScoreDisplay();
     renderRoster();
+    updateTouchControls();
 }
 function updateConnectionIndicator() {
     let status = "checking";

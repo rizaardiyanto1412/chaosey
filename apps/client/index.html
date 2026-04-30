@@ -1440,6 +1440,10 @@
         -webkit-tap-highlight-color: transparent;
       }
 
+      .touch-button[hidden] {
+        display: none;
+      }
+
       .touch-button:active {
         transform: translateY(2px) scale(0.96);
         filter: brightness(1.08);
@@ -1685,10 +1689,11 @@
         }
 
         .hud-top-center {
-          top: 20px;
+          top: max(88px, calc(env(safe-area-inset-top) + 18px));
           gap: 10px;
           padding: 8px 14px 8px 10px;
           border-radius: 28px;
+          z-index: 9;
         }
 
         .hud-timer {
@@ -1722,7 +1727,7 @@
         }
 
         .hud-connection {
-          top: 74px;
+          top: max(146px, calc(env(safe-area-inset-top) + 76px));
           right: auto;
           left: 50%;
           transform: translateX(-50%);
@@ -1813,8 +1818,29 @@
           display: grid;
         }
 
+        .hud-roster {
+          bottom: max(186px, calc(env(safe-area-inset-bottom) + 150px));
+          right: 12px;
+          max-width: min(260px, calc(100vw - 24px));
+        }
+
         .hud-bottom-left {
           display: none;
+        }
+      }
+
+      @media (hover: none) and (pointer: coarse) and (max-width: 640px) {
+        .touch-controls {
+          grid-template-columns: repeat(3, 70px);
+          grid-template-rows: repeat(2, 70px);
+          bottom: max(28px, env(safe-area-inset-bottom));
+        }
+
+        .touch-button {
+          width: 70px;
+          height: 70px;
+          border-radius: 20px;
+          font-size: 1.65rem;
         }
       }
     </style>

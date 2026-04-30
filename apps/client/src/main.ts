@@ -957,6 +957,13 @@ function renderRoster() {
   rosterEl.innerHTML = rows;
 }
 
+function updateTouchControls() {
+  for (const button of touchButtons) {
+    const role = button.dataset.role as PlayerRole | undefined;
+    button.hidden = !role || !myRoles.includes(role);
+  }
+}
+
 function applyMuteState() {
   if (soundtrackAudio) soundtrackAudio.volume = isMuted ? 0 : soundtrackBaseVolume;
   if (lobbyAudio) lobbyAudio.volume = isMuted ? 0 : lobbyBaseVolume;
@@ -1633,6 +1640,7 @@ function updateUi() {
   updateActivatePowerUpButton();
   updateScoreDisplay();
   renderRoster();
+  updateTouchControls();
 }
 
 function updateConnectionIndicator() {
